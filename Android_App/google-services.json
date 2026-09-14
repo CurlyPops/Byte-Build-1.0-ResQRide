@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "679854880152",
+    "project_id": "resqride-d6c47",
+    "storage_bucket": "resqride-d6c47.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:679854880152:android:9d600b4d24f0aee17527ed",
+        "android_client_info": {
+          "package_name": "com.aurafarmers.resqride"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAejawZJSLkbVM_9z0pnTXTQcaV-ckLiM8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

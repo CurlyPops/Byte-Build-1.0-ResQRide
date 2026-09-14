@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.ResQRide" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/emerald_dark</item>
+        <item name="android:windowBackground">@color/bg_light</item>
+    </style>
+</resources>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_dark">#0F172A</color>
+    <color name="bg_light">#F8FAFC</color>
+    <color name="card_dark">#1E293B</color>
+    <color name="card_light">#FFFFFF</color>
+    <color name="emerald_dark">#059669</color>
+    <color name="emerald_light">#34D399</color>
+    <color name="emerald_primary">#10B981</color>
+    <color name="emergency_red">#EF4444</color>
+    <color name="mint_soft">#A7F3D0</color>
+    <color name="teal_accent">#0EA5E9</color>
+    <color name="text_primary_dark">#F1F5F9</color>
+    <color name="text_primary_light">#0F172A</color>
+    <color name="warning_amber">#F59E0B</color>
+    <string name="app_name">ResQRide</string>
+    <string name="crash_alert_channel_desc">High-priority emergency alerts when a crash is detected</string>
+    <string name="crash_alert_channel_name">Crash Alert &amp; Emergency SOS</string>
+    <string name="default_web_client_id">679854880152-dsmo8nh03f7s4trfap3rpno7u94nakup.apps.googleusercontent.com</string>
+    <string name="gcm_defaultSenderId" translatable="false">679854880152</string>
+    <string name="google_api_key" translatable="false">AIzaSyAejawZJSLkbVM_9z0pnTXTQcaV-ckLiM8</string>
+    <string name="google_app_id" translatable="false">1:679854880152:android:9d600b4d24f0aee17527ed</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyAejawZJSLkbVM_9z0pnTXTQcaV-ckLiM8</string>
+    <string name="google_storage_bucket" translatable="false">resqride-d6c47.firebasestorage.app</string>
+    <string name="project_id" translatable="false">resqride-d6c47</string>
+    <string name="ride_service_channel_desc">Monitors BLE connection to the helmet and tracks ride safety</string>
+    <string name="ride_service_channel_name">Ride Tracking &amp; Helmet Monitor</string>
+    <style name="Theme.ResQRide" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/emerald_dark</item>
+        <item name="android:windowBackground">@color/bg_light</item>
+    </style>
+</resources>

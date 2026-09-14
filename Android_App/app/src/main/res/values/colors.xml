@@ -1,0 +1,20 @@
+<resources>
+    <!-- Positive & Uplifting Primary Theme Colors -->
+    <color name="emerald_primary">#10B981</color>
+    <color name="emerald_dark">#059669</color>
+    <color name="emerald_light">#34D399</color>
+    <color name="teal_accent">#0EA5E9</color>
+    <color name="mint_soft">#A7F3D0</color>
+
+    <!-- Emergency & Alert Accents -->
+    <color name="emergency_red">#EF4444</color>
+    <color name="warning_amber">#F59E0B</color>
+
+    <!-- Neutrals -->
+    <color name="bg_light">#F8FAFC</color>
+    <color name="card_light">#FFFFFF</color>
+    <color name="bg_dark">#0F172A</color>
+    <color name="card_dark">#1E293B</color>
+    <color name="text_primary_light">#0F172A</color>
+    <color name="text_primary_dark">#F1F5F9</color>
+</resources>

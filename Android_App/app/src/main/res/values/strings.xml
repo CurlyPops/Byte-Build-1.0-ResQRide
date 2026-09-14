@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">ResQRide</string>
+    <string name="ride_service_channel_name">Ride Tracking &amp; Helmet Monitor</string>
+    <string name="ride_service_channel_desc">Monitors BLE connection to the helmet and tracks ride safety</string>
+    <string name="crash_alert_channel_name">Crash Alert &amp; Emergency SOS</string>
+    <string name="crash_alert_channel_desc">High-priority emergency alerts when a crash is detected</string>
+    <string name="default_web_client_id">679854880152-dsmo8nh03f7s4trfap3rpno7u94nakup.apps.googleusercontent.com</string>
+</resources>

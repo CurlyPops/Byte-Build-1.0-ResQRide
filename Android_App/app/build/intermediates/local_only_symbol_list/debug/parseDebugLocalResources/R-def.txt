@@ -1,0 +1,34 @@
+R_DEF: Internal format may change without notice
+local
+color bg_dark
+color bg_light
+color card_dark
+color card_light
+color emerald_dark
+color emerald_light
+color emerald_primary
+color emergency_red
+color mint_soft
+color teal_accent
+color text_primary_dark
+color text_primary_light
+color warning_amber
+drawable ic_launcher_foreground
+mipmap ic_launcher
+mipmap ic_launcher_round
+string app_name
+string crash_alert_channel_desc
+string crash_alert_channel_name
+string default_web_client_id
+string gcm_defaultSenderId
+string google_api_key
+string google_app_id
+string google_crash_reporting_api_key
+string google_storage_bucket
+string project_id
+string ride_service_channel_desc
+string ride_service_channel_name
+style Theme.ResQRide
+xml backup_rules
+xml data_extraction_rules
+xml file_paths
