@@ -7,10 +7,39 @@ import android.print.PrintAttributes
 import android.print.PrintManager
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 
 class MedicalManager(private val context: Context) {
+
+    private val httpClient = OkHttpClient()
+
+    /**
+     * Downloads a PDF from a temporary signed URL and caches it in context.cacheDir for printing or sharing.
+     */
+    suspend fun downloadPdfFromSignedUrl(signedUrl: String, fileName: String): File? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url(signedUrl).build()
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) return@withContext null
+
+            val safeName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val cacheFile = File(context.cacheDir, "cached_$safeName")
+            response.body?.byteStream()?.use { input ->
+                FileOutputStream(cacheFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            cacheFile
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
 
     /**
      * Prints the user's prescription PDF directly via Android PrintManager.

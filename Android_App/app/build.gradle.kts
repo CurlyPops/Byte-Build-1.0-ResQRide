@@ -82,6 +82,9 @@ dependencies {
     // QR Code generation (ZXing Core)
     implementation("com.google.zxing:core:3.5.3")
 
+    // HTTP Networking for Secure FastAPI Storage Bridge
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

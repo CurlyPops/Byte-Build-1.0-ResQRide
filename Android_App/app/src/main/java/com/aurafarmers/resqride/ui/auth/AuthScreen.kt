@@ -35,6 +35,7 @@ import com.aurafarmers.resqride.auth.AuthResult
 import com.aurafarmers.resqride.auth.FirebaseAuthManager
 import com.aurafarmers.resqride.data.model.EmergencyContact
 import com.aurafarmers.resqride.data.model.UserProfile
+import com.aurafarmers.resqride.data.network.PdfStorageService
 import com.aurafarmers.resqride.data.pref.UserPreferences
 import com.aurafarmers.resqride.ui.theme.*
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -140,15 +141,30 @@ fun AuthScreen(
     var notesInput by remember { mutableStateOf("") }
 
     // Prescription PDF
+    val pdfStorageService = remember { PdfStorageService(context) }
     var uploadedPdfName by remember { mutableStateOf<String?>(null) }
     var uploadedPdfUri by remember { mutableStateOf<String?>(null) }
+    var uploadedPdfFileId by remember { mutableStateOf<String?>(null) }
+    var isUploadingPdf by remember { mutableStateOf(false) }
+
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            uploadedPdfName = uri.lastPathSegment ?: "prescription.pdf"
+            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "prescription.pdf"
+            uploadedPdfName = fileName
             uploadedPdfUri = uri.toString()
-            Toast.makeText(context, "Prescription attached: $uploadedPdfName", Toast.LENGTH_SHORT).show()
+            isUploadingPdf = true
+            scope.launch {
+                val uploadResult = pdfStorageService.uploadPdf(uri, fileName)
+                isUploadingPdf = false
+                uploadResult.onSuccess { result ->
+                    uploadedPdfFileId = result.fileId
+                    Toast.makeText(context, "Prescription uploaded: ${result.originalFilename}", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "Cloud upload note: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
@@ -657,29 +673,44 @@ fun AuthScreen(
                                     .clip(RoundedCornerShape(16.dp))
                                     .border(2.dp, EmeraldPrimary.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
                                     .background(EmeraldPrimary.copy(alpha = 0.05f))
-                                    .clickable { pdfPickerLauncher.launch("application/pdf") }
+                                    .clickable(enabled = !isUploadingPdf) { pdfPickerLauncher.launch("application/pdf") }
                                     .padding(24.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(
-                                        imageVector = Icons.Default.PictureAsPdf,
-                                        contentDescription = null,
-                                        tint = if (uploadedPdfName != null) EmeraldPrimary else TealAccent,
-                                        modifier = Modifier.size(48.dp)
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = uploadedPdfName ?: "Tap to choose Prescription PDF",
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = if (uploadedPdfName != null) "Attached successfully" else "Supports .pdf files",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    if (isUploadingPdf) {
+                                        CircularProgressIndicator(
+                                            color = EmeraldPrimary,
+                                            modifier = Modifier.size(36.dp),
+                                            strokeWidth = 3.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Text(
+                                            text = "Uploading to secure cloud storage...",
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.PictureAsPdf,
+                                            contentDescription = null,
+                                            tint = if (uploadedPdfName != null) EmeraldPrimary else TealAccent,
+                                            modifier = Modifier.size(48.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = uploadedPdfName ?: "Tap to choose Prescription PDF",
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = if (uploadedPdfName != null) "Uploaded successfully to cloud" else "Supports .pdf files (max 10 MB)",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
 
@@ -687,6 +718,7 @@ fun AuthScreen(
 
                             Button(
                                 onClick = { stage = AuthStage.ONBOARDING_CONTACTS },
+                                enabled = !isUploadingPdf,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(52.dp),
@@ -820,9 +852,10 @@ fun AuthScreen(
                                         chronicConditions = conditionsList.toList(),
                                         prescriptionFileName = uploadedPdfName,
                                         prescriptionLocalUri = uploadedPdfUri,
+                                        prescriptionFileId = uploadedPdfFileId,
                                         emergencyNotes = notesInput.trim(),
                                         isProfileComplete = true,
-                                        publicEmergencyUrl = "https://resqride.web.app/med/$userId"
+                                        publicEmergencyUrl = "https://resqride-oqhy.onrender.com/med/$userId"
                                     )
                                     userPreferences.saveUserProfile(profile)
 

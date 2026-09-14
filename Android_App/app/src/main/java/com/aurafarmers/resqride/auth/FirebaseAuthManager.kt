@@ -22,6 +22,18 @@ class FirebaseAuthManager(private val context: Context) {
         get() = auth.currentUser
 
     /**
+     * Retrieves the current user's Firebase ID token for authenticating with the FastAPI backend.
+     */
+    suspend fun getIdToken(forceRefresh: Boolean = false): String? {
+        return try {
+            auth.currentUser?.getIdToken(forceRefresh)?.await()?.token
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
      * Builds GoogleSignInClient.
      * Passes webClientId (from Firebase Console) to obtain the Google idToken.
      */

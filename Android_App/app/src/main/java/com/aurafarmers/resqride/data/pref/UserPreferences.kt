@@ -130,6 +130,7 @@ class UserPreferences(context: Context) {
             put("prescriptionName", profile.prescriptionFileName ?: "")
             put("prescriptionUrl", profile.prescriptionUrl ?: "")
             put("prescriptionLocalUri", profile.prescriptionLocalUri ?: "")
+            put("prescriptionFileId", profile.prescriptionFileId ?: "")
             put("notes", profile.emergencyNotes)
             put("isProfileComplete", profile.isProfileComplete)
         }
@@ -169,9 +170,10 @@ class UserPreferences(context: Context) {
                 chronicConditions = conditionsList,
                 prescriptionFileName = obj.optString("prescriptionName").takeIf { it.isNotEmpty() },
                 prescriptionLocalUri = obj.optString("prescriptionLocalUri").takeIf { it.isNotEmpty() },
+                prescriptionFileId = obj.optString("prescriptionFileId").takeIf { it.isNotEmpty() },
                 emergencyNotes = obj.optString("notes", ""),
                 isProfileComplete = obj.optBoolean("isProfileComplete", false),
-                publicEmergencyUrl = "https://resqride.web.app/med/$uid"
+                publicEmergencyUrl = "https://resqride-oqhy.onrender.com/med/$uid"
             )
         } catch (e: Exception) {
             UserProfile()

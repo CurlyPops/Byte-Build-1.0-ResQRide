@@ -19,10 +19,11 @@ data class UserProfile(
     val prescriptionFileName: String? = null,
     val prescriptionUrl: String? = null,
     val prescriptionLocalUri: String? = null,
+    val prescriptionFileId: String? = null,
 
     // Profile Completion & Auth status
     val isProfileComplete: Boolean = false,
 
     // Public Emergency Profile URL
-    val publicEmergencyUrl: String = "https://resqride.web.app/med/$uid"
+    val publicEmergencyUrl: String = "https://resqride-oqhy.onrender.com/med/$uid"
 )

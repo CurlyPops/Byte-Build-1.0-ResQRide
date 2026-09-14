@@ -26,9 +26,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurafarmers.resqride.data.model.UserProfile
+import com.aurafarmers.resqride.data.network.PdfStorageService
 import com.aurafarmers.resqride.medical.MedicalManager
 import com.aurafarmers.resqride.medical.QrCodeGenerator
 import com.aurafarmers.resqride.ui.theme.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -37,29 +39,44 @@ fun MedicalScreen(
     onUpdateProfile: (UserProfile) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val medicalManager = remember { MedicalManager(context) }
+    val pdfStorageService = remember { PdfStorageService(context) }
 
     var showEditDialog by remember { mutableStateOf(false) }
+    var isUploadingPdf by remember { mutableStateOf(false) }
+    var isDownloadingPdf by remember { mutableStateOf(false) }
+    var isDeletingPdf by remember { mutableStateOf(false) }
 
     // Dynamic QR Bitmap pointing to public emergency profile
     val qrBitmap = remember(userProfile.publicEmergencyUrl) {
         QrCodeGenerator.generateQrBitmap(userProfile.publicEmergencyUrl, 512, 512)
     }
 
-    // PDF Picker launcher
+    // PDF Picker launcher with secure backend upload
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            val fileName = uri.lastPathSegment ?: "prescription.pdf"
-            onUpdateProfile(
-                userProfile.copy(
-                    prescriptionFileName = fileName,
-                    prescriptionLocalUri = uri.toString()
-                )
-            )
-            Toast.makeText(context, "Prescription PDF uploaded: $fileName", Toast.LENGTH_SHORT).show()
+            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "prescription.pdf"
+            isUploadingPdf = true
+            scope.launch {
+                val uploadResult = pdfStorageService.uploadPdf(uri, fileName)
+                isUploadingPdf = false
+                uploadResult.onSuccess { result ->
+                    onUpdateProfile(
+                        userProfile.copy(
+                            prescriptionFileName = result.originalFilename,
+                            prescriptionFileId = result.fileId,
+                            prescriptionLocalUri = uri.toString()
+                        )
+                    )
+                    Toast.makeText(context, "Prescription uploaded successfully!", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "Upload failed: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
@@ -245,40 +262,133 @@ fun MedicalScreen(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedButton(
                         onClick = { pdfPickerLauncher.launch("application/pdf") },
                         modifier = Modifier.weight(1f),
+                        enabled = !isUploadingPdf && !isDownloadingPdf && !isDeletingPdf,
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (userProfile.prescriptionFileName != null) "Replace" else "Upload", fontSize = 12.sp)
+                        if (isUploadingPdf) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Uploading...", fontSize = 12.sp)
+                        } else {
+                            Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(if (userProfile.prescriptionFileName != null) "Replace" else "Upload", fontSize = 12.sp)
+                        }
                     }
 
                     if (userProfile.prescriptionFileName != null) {
                         Button(
                             onClick = {
-                                val demoPdf = medicalManager.getOrCreateDemoPrescription()
-                                medicalManager.printPrescription(demoPdf)
+                                val fileId = userProfile.prescriptionFileId
+                                if (!fileId.isNullOrBlank()) {
+                                    isDownloadingPdf = true
+                                    scope.launch {
+                                        val urlResult = pdfStorageService.getSignedUrl(fileId)
+                                        isDownloadingPdf = false
+                                        urlResult.onSuccess { signedUrl ->
+                                            try {
+                                                val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(signedUrl))
+                                                context.startActivity(viewIntent)
+                                            } catch (e: Exception) {
+                                                Toast.makeText(context, "No app available to open PDF link", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }.onFailure { err ->
+                                            Toast.makeText(context, "Could not open document: ${err.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                } else {
+                                    val demoPdf = medicalManager.getOrCreateDemoPrescription()
+                                    medicalManager.printPrescription(demoPdf)
+                                }
                             },
                             modifier = Modifier.weight(1f),
+                            enabled = !isUploadingPdf && !isDownloadingPdf && !isDeletingPdf,
                             colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Print", fontSize = 12.sp)
+                            if (isDownloadingPdf) {
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Opening...", fontSize = 12.sp)
+                            } else {
+                                Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("View", fontSize = 12.sp)
+                            }
                         }
 
                         IconButton(
                             onClick = {
-                                val demoPdf = medicalManager.getOrCreateDemoPrescription()
-                                medicalManager.sharePrescription(demoPdf)
-                            }
+                                val fileId = userProfile.prescriptionFileId
+                                if (!fileId.isNullOrBlank()) {
+                                    scope.launch {
+                                        val urlResult = pdfStorageService.getSignedUrl(fileId)
+                                        urlResult.onSuccess { signedUrl ->
+                                            val downloaded = medicalManager.downloadPdfFromSignedUrl(
+                                                signedUrl,
+                                                userProfile.prescriptionFileName ?: "prescription.pdf"
+                                            )
+                                            if (downloaded != null) {
+                                                medicalManager.printPrescription(downloaded)
+                                            } else {
+                                                Toast.makeText(context, "Could not download document for printing", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }.onFailure { err ->
+                                            Toast.makeText(context, "Print failed: ${err.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                } else {
+                                    val demoPdf = medicalManager.getOrCreateDemoPrescription()
+                                    medicalManager.printPrescription(demoPdf)
+                                }
+                            },
+                            enabled = !isUploadingPdf && !isDownloadingPdf && !isDeletingPdf
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = null, tint = TealAccent)
+                            Icon(Icons.Default.Print, contentDescription = "Print Prescription", tint = EmeraldPrimary)
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val fileId = userProfile.prescriptionFileId
+                                if (!fileId.isNullOrBlank()) {
+                                    isDeletingPdf = true
+                                    scope.launch {
+                                        val deleteResult = pdfStorageService.deletePdf(fileId)
+                                        isDeletingPdf = false
+                                        deleteResult.onSuccess {
+                                            onUpdateProfile(
+                                                userProfile.copy(
+                                                    prescriptionFileName = null,
+                                                    prescriptionFileId = null,
+                                                    prescriptionLocalUri = null,
+                                                    prescriptionUrl = null
+                                                )
+                                            )
+                                            Toast.makeText(context, "Prescription deleted from storage", Toast.LENGTH_SHORT).show()
+                                        }.onFailure { err ->
+                                            Toast.makeText(context, "Delete failed: ${err.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                } else {
+                                    onUpdateProfile(
+                                        userProfile.copy(
+                                            prescriptionFileName = null,
+                                            prescriptionFileId = null,
+                                            prescriptionLocalUri = null
+                                        )
+                                    )
+                                    Toast.makeText(context, "Prescription removed", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            enabled = !isUploadingPdf && !isDownloadingPdf && !isDeletingPdf
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete Prescription", tint = EmergencyRed)
                         }
                     }
                 }
