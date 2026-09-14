@@ -1,20 +1,12 @@
 // =========================================================================
-// ResQRide Smart Helmet Firmware — HARDWARE TEST SKETCH
+// ResQRide Smart Helmet Firmware — TinyML 1D CNN Crash Detection
 //
 // Board: ESP32-WROOM-32
-// Sensor: MPU6050 via I2C
+// Sensor: MPU6050 via I2C (100 Hz, ±16g, ±2000 deg/s, DLPF 44 Hz)
+// AI Model: 1D CNN trained on EPFL Helmet Impacts + VZCrash Road Dynamics
 // Comms: BLE GATT Server
 //
 // ESP32 Arduino Core: 3.x
-//
-// EXACT SAME CODE AS ResQRide.ino WITH LOWERED THRESHOLDS FOR TESTING:
-//   Acceleration >= 1.5g  (production: 4.0g)
-//   AND
-//   Gyroscope >= 80 deg/s (production: 300.0 deg/s)
-//   FOR 2 consecutive samples (production: 3 samples)
-//   = 20 ms at 100 Hz
-//
-// Allows testing crash detection & buzzer by shaking the helmet by hand.
 // =========================================================================
 
 #include <Wire.h>
@@ -23,6 +15,12 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <math.h>
+
+// TensorFlow Lite for Microcontrollers & Auto-Generated Model Header
+#include "tensorflow/lite/micro/all_ops_resolver.h"
+#include "tensorflow/lite/micro/micro_interpreter.h"
+#include "tensorflow/lite/schema/schema_generated.h"
+#include "model_data.h"
 
 // ========================================================================
 // PIN DEFINITIONS
@@ -38,7 +36,7 @@
 #define LED_BLE_PIN      15
 
 // ========================================================================
-// MPU6050
+// MPU6050 REGISTERS
 // ========================================================================
 
 #define MPU6050_ADDR_1   0x68
@@ -57,34 +55,46 @@ uint8_t mpuAddress = 0;
 // MPU6050 SCALE
 // ========================================================================
 
-// ±16g
+// ±16g range: 2048 LSB/g
 #define ACCEL_LSB_PER_G 2048.0f
 
-// ±2000 deg/s
+// ±2000 deg/s range: 16.4 LSB/(deg/s)
 #define GYRO_LSB_PER_DPS 16.4f
 
 // ========================================================================
-// CRASH THRESHOLDS (LOWERED FOR HAND-SHAKE TESTING)
+// 1D CNN MODEL & CIRCULAR BUFFER (Replaces manual threshold constants)
 // ========================================================================
 
-const float ACCEL_THRESHOLD_G  = 1.5f;   // Lowered from 4.0g
-const float GYRO_THRESHOLD_DPS = 80.0f;  // Lowered from 300.0 dps
+// CRASH_WINDOW_LEN (100), CRASH_CHANNELS (6), CRASH_THRESHOLD are in model_data.h
 
-const int SUSTAINED_COUNT = 2;           // Lowered from 3 samples
+// Rolling circular buffer holding 1.0 second of data @ 100 Hz
+float imuBuffer[CRASH_WINDOW_LEN][CRASH_CHANNELS];
+int imuBufferHead = 0;
+
+// Run 1D CNN inference every 10 samples (every 100 ms)
+const int INFERENCE_STRIDE = 10;
+int sampleCountSinceInference = 0;
+
+// TFLM Runtime State
+constexpr int kTensorArenaSize = 25 * 1024; // 25 KB SRAM tensor arena
+uint8_t tensor_arena[kTensorArenaSize];
+
+const tflite::Model* tflModel = nullptr;
+tflite::MicroInterpreter* interpreter = nullptr;
+TfLiteTensor* inputTensor = nullptr;
+TfLiteTensor* outputTensor = nullptr;
+
+float latestCrashProb = 0.0f;
 
 // ========================================================================
 // TIMING
 // ========================================================================
 
-const unsigned long SAMPLE_INTERVAL_US = 10000UL; // 100 Hz
-
-const unsigned long BUZZER_DURATION_MS = 15000UL;
-
+const unsigned long SAMPLE_INTERVAL_US = 10000UL; // 100 Hz (10 ms)
+const unsigned long BUZZER_DURATION_MS = 15000UL; // 15 seconds
 const unsigned long BLE_BLINK_INTERVAL = 500UL;
-
-const unsigned long DEBOUNCE_MS = 200UL;
-
-const int CALIBRATION_SAMPLES = 500;
+const unsigned long DEBOUNCE_MS        = 200UL;
+const int CALIBRATION_SAMPLES          = 500;
 
 // ========================================================================
 // BUZZER
@@ -142,14 +152,9 @@ float gyroMag = 0;
 // CRASH STATE
 // ========================================================================
 
-int sustainedHitCount = 0;
-
 bool crashDetected = false;
-
 bool buzzerActive = false;
-
 unsigned long buzzerStartTime = 0;
-
 unsigned long lastSampleTime = 0;
 
 // ========================================================================
@@ -165,15 +170,12 @@ int initialSwitchState = LOW;
 // ========================================================================
 
 BLEServer* pServer = nullptr;
-
 BLECharacteristic* pTelemetryChar = nullptr;
 BLECharacteristic* pCrashChar = nullptr;
 BLECharacteristic* pStatusChar = nullptr;
 
 bool deviceConnected = false;
-
 unsigned long lastBleBlink = 0;
-
 bool bleLedState = false;
 
 // ========================================================================
@@ -181,31 +183,17 @@ bool bleLedState = false;
 // ========================================================================
 
 class ServerCallbacks : public BLEServerCallbacks {
-
   void onConnect(BLEServer* server) override {
-
     deviceConnected = true;
-
-    Serial.println(
-      "[BLE] Phone connected!"
-    );
+    Serial.println("[BLE] Phone connected!");
   }
 
   void onDisconnect(BLEServer* server) override {
-
     deviceConnected = false;
-
-    Serial.println(
-      "[BLE] Phone disconnected."
-    );
-
+    Serial.println("[BLE] Phone disconnected.");
     delay(200);
-
     server->getAdvertising()->start();
-
-    Serial.println(
-      "[BLE] Advertising restarted."
-    );
+    Serial.println("[BLE] Advertising restarted.");
   }
 };
 
@@ -213,32 +201,15 @@ class ServerCallbacks : public BLEServerCallbacks {
 // MPU6050 REGISTER WRITE
 // ========================================================================
 
-bool mpuWriteRegister(
-  uint8_t reg,
-  uint8_t value
-) {
-
-  Wire.beginTransmission(
-    mpuAddress
-  );
-
+bool mpuWriteRegister(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(mpuAddress);
   Wire.write(reg);
-
   Wire.write(value);
-
-  uint8_t error =
-    Wire.endTransmission();
-
+  uint8_t error = Wire.endTransmission();
   if (error != 0) {
-
-    Serial.printf(
-      "[MPU6050] Write error: %d\n",
-      error
-    );
-
+    Serial.printf("[MPU6050] Write error: %d\n", error);
     return false;
   }
-
   return true;
 }
 
@@ -246,48 +217,21 @@ bool mpuWriteRegister(
 // MPU6050 REGISTER READ
 // ========================================================================
 
-bool mpuReadRegisters(
-  uint8_t reg,
-  uint8_t* buffer,
-  uint8_t length
-) {
-
-  Wire.beginTransmission(
-    mpuAddress
-  );
-
+bool mpuReadRegisters(uint8_t reg, uint8_t* buffer, uint8_t length) {
+  Wire.beginTransmission(mpuAddress);
   Wire.write(reg);
-
-  if (
-    Wire.endTransmission(false)
-    != 0
-  ) {
-
+  if (Wire.endTransmission(false) != 0) {
     return false;
   }
 
-  uint8_t received =
-    Wire.requestFrom(
-      mpuAddress,
-      length,
-      true
-    );
-
+  uint8_t received = Wire.requestFrom(mpuAddress, length, true);
   if (received != length) {
-
     return false;
   }
 
-  for (
-    uint8_t i = 0;
-    i < length;
-    i++
-  ) {
-
-    buffer[i] =
-      Wire.read();
+  for (uint8_t i = 0; i < length; i++) {
+    buffer[i] = Wire.read();
   }
-
   return true;
 }
 
@@ -295,90 +239,30 @@ bool mpuReadRegisters(
 // DETECT MPU6050
 // ========================================================================
 
-bool detectMPU6050(
-  uint8_t address
-) {
-
+bool detectMPU6050(uint8_t address) {
   mpuAddress = address;
 
   // Wake sensor
-
-  if (
-    !mpuWriteRegister(
-      REG_PWR_MGMT_1,
-      0x00
-    )
-  ) {
-
-    return false;
-  }
-
+  if (!mpuWriteRegister(REG_PWR_MGMT_1, 0x00)) return false;
   delay(100);
 
   // Configure 100 Hz
-
-  if (
-    !mpuWriteRegister(
-      REG_SMPLRT_DIV,
-      9
-    )
-  ) {
-
-    return false;
-  }
+  if (!mpuWriteRegister(REG_SMPLRT_DIV, 9)) return false;
 
   // DLPF ~44 Hz
-
-  if (
-    !mpuWriteRegister(
-      REG_CONFIG,
-      0x03
-    )
-  ) {
-
-    return false;
-  }
+  if (!mpuWriteRegister(REG_CONFIG, 0x03)) return false;
 
   // Accelerometer ±16g
-
-  if (
-    !mpuWriteRegister(
-      REG_ACCEL_CONFIG,
-      0x18
-    )
-  ) {
-
-    return false;
-  }
+  if (!mpuWriteRegister(REG_ACCEL_CONFIG, 0x18)) return false;
 
   // Gyroscope ±2000 deg/s
-
-  if (
-    !mpuWriteRegister(
-      REG_GYRO_CONFIG,
-      0x18
-    )
-  ) {
-
-    return false;
-  }
+  if (!mpuWriteRegister(REG_GYRO_CONFIG, 0x18)) return false;
 
   delay(100);
 
   // Try reading sensor data
-
   uint8_t data[6];
-
-  if (
-    !mpuReadRegisters(
-      REG_ACCEL_XOUT_H,
-      data,
-      6
-    )
-  ) {
-
-    return false;
-  }
+  if (!mpuReadRegisters(REG_ACCEL_XOUT_H, data, 6)) return false;
 
   return true;
 }
@@ -388,54 +272,22 @@ bool detectMPU6050(
 // ========================================================================
 
 bool mpuInit() {
-
   Serial.println();
-  Serial.println(
-    "[MPU6050] Detecting sensor..."
-  );
+  Serial.println("[MPU6050] Detecting sensor...");
 
-  // Try 0x68
-
-  Serial.println(
-    "[MPU6050] Trying address 0x68..."
-  );
-
-  if (
-    detectMPU6050(
-      MPU6050_ADDR_1
-    )
-  ) {
-
-    Serial.println(
-      "[MPU6050] Found at 0x68"
-    );
-
+  Serial.println("[MPU6050] Trying address 0x68...");
+  if (detectMPU6050(MPU6050_ADDR_1)) {
+    Serial.println("[MPU6050] Found at 0x68");
     return true;
   }
 
-  // Try 0x69
-
-  Serial.println(
-    "[MPU6050] Trying address 0x69..."
-  );
-
-  if (
-    detectMPU6050(
-      MPU6050_ADDR_2
-    )
-  ) {
-
-    Serial.println(
-      "[MPU6050] Found at 0x69"
-    );
-
+  Serial.println("[MPU6050] Trying address 0x69...");
+  if (detectMPU6050(MPU6050_ADDR_2)) {
+    Serial.println("[MPU6050] Found at 0x69");
     return true;
   }
 
-  Serial.println(
-    "[MPU6050] Sensor not responding!"
-  );
-
+  Serial.println("[MPU6050] Sensor not responding!");
   return false;
 }
 
@@ -443,65 +295,22 @@ bool mpuInit() {
 // RAW SENSOR READ
 // ========================================================================
 
-bool mpuReadRaw(
-  int16_t* ax,
-  int16_t* ay,
-  int16_t* az,
-  int16_t* gx,
-  int16_t* gy,
-  int16_t* gz
-) {
-
+bool mpuReadRaw(int16_t* ax, int16_t* ay, int16_t* az,
+                int16_t* gx, int16_t* gy, int16_t* gz) {
   uint8_t data[14];
-
-  if (
-    !mpuReadRegisters(
-      REG_ACCEL_XOUT_H,
-      data,
-      14
-    )
-  ) {
-
+  if (!mpuReadRegisters(REG_ACCEL_XOUT_H, data, 14)) {
     return false;
   }
 
-  *ax =
-    (int16_t)(
-      (data[0] << 8) |
-      data[1]
-    );
-
-  *ay =
-    (int16_t)(
-      (data[2] << 8) |
-      data[3]
-    );
-
-  *az =
-    (int16_t)(
-      (data[4] << 8) |
-      data[5]
-    );
+  *ax = (int16_t)((data[0] << 8) | data[1]);
+  *ay = (int16_t)((data[2] << 8) | data[3]);
+  *az = (int16_t)((data[4] << 8) | data[5]);
 
   // data[6], data[7] = temperature
 
-  *gx =
-    (int16_t)(
-      (data[8] << 8) |
-      data[9]
-    );
-
-  *gy =
-    (int16_t)(
-      (data[10] << 8) |
-      data[11]
-    );
-
-  *gz =
-    (int16_t)(
-      (data[12] << 8) |
-      data[13]
-    );
+  *gx = (int16_t)((data[8] << 8) | data[9]);
+  *gy = (int16_t)((data[10] << 8) | data[11]);
+  *gz = (int16_t)((data[12] << 8) | data[13]);
 
   return true;
 }
@@ -511,158 +320,50 @@ bool mpuReadRaw(
 // ========================================================================
 
 void mpuCalibrate() {
-
   Serial.println();
-  Serial.println(
-    "========================================"
-  );
-
-  Serial.println(
-    "[CAL] CALIBRATION START"
-  );
-
-  Serial.println(
-    "[CAL] Keep helmet completely STILL."
-  );
-
-  Serial.println(
-    "[CAL] Place helmet flat."
-  );
-
-  Serial.printf(
-    "[CAL] Samples: %d\n",
-    CALIBRATION_SAMPLES
-  );
-
-  Serial.println(
-    "========================================"
-  );
+  Serial.println("========================================");
+  Serial.println("[CAL] CALIBRATION START");
+  Serial.println("[CAL] Keep helmet completely STILL.");
+  Serial.println("[CAL] Place helmet flat.");
+  Serial.printf("[CAL] Samples: %d\n", CALIBRATION_SAMPLES);
+  Serial.println("========================================");
 
   delay(1000);
 
-  float sumAx = 0;
-  float sumAy = 0;
-  float sumAz = 0;
-
-  float sumGx = 0;
-  float sumGy = 0;
-  float sumGz = 0;
-
-  int16_t ax;
-  int16_t ay;
-  int16_t az;
-
-  int16_t gx;
-  int16_t gy;
-  int16_t gz;
-
+  float sumAx = 0, sumAy = 0, sumAz = 0;
+  float sumGx = 0, sumGy = 0, sumGz = 0;
+  int16_t ax, ay, az, gx, gy, gz;
   int validSamples = 0;
 
-  for (
-    int i = 0;
-    i < CALIBRATION_SAMPLES;
-    i++
-  ) {
-
-    if (
-      mpuReadRaw(
-        &ax,
-        &ay,
-        &az,
-        &gx,
-        &gy,
-        &gz
-      )
-    ) {
-
-      sumAx += ax;
-      sumAy += ay;
-      sumAz += az;
-
-      sumGx += gx;
-      sumGy += gy;
-      sumGz += gz;
-
+  for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
+    if (mpuReadRaw(&ax, &ay, &az, &gx, &gy, &gz)) {
+      sumAx += ax; sumAy += ay; sumAz += az;
+      sumGx += gx; sumGy += gy; sumGz += gz;
       validSamples++;
     }
-
-    if (
-      i % 50 == 0
-    ) {
-
-      Serial.printf(
-        "[CAL] %d / %d\n",
-        i,
-        CALIBRATION_SAMPLES
-      );
+    if (i % 50 == 0) {
+      Serial.printf("[CAL] %d / %d\n", i, CALIBRATION_SAMPLES);
     }
-
     delay(10);
   }
 
-  if (
-    validSamples < 400
-  ) {
-
-    Serial.println(
-      "[CAL] ERROR: Too many sensor read failures!"
-    );
-
+  if (validSamples < 400) {
+    Serial.println("[CAL] ERROR: Too many sensor read failures!");
     return;
   }
 
-  // Gyroscope offsets
+  gyroOffsetX = sumGx / validSamples;
+  gyroOffsetY = sumGy / validSamples;
+  gyroOffsetZ = sumGz / validSamples;
 
-  gyroOffsetX =
-    sumGx / validSamples;
-
-  gyroOffsetY =
-    sumGy / validSamples;
-
-  gyroOffsetZ =
-    sumGz / validSamples;
-
-  // Accelerometer offsets
-  //
-  // Helmet flat:
-  // X = 0g
-  // Y = 0g
-  // Z = +1g
-  //
-  // At ±16g:
-  // 2048 LSB = 1g
-
-  accelOffsetX =
-    sumAx / validSamples;
-
-  accelOffsetY =
-    sumAy / validSamples;
-
-  accelOffsetZ =
-    (sumAz / validSamples)
-    - 2048.0f;
+  accelOffsetX = sumAx / validSamples;
+  accelOffsetY = sumAy / validSamples;
+  accelOffsetZ = (sumAz / validSamples) - 2048.0f; // 1g offset on Z
 
   Serial.println();
-
-  Serial.println(
-    "[CAL] Calibration complete."
-  );
-
-  Serial.printf(
-    "[CAL] Accel offsets: "
-    "X=%.1f Y=%.1f Z=%.1f\n",
-    accelOffsetX,
-    accelOffsetY,
-    accelOffsetZ
-  );
-
-  Serial.printf(
-    "[CAL] Gyro offsets: "
-    "X=%.1f Y=%.1f Z=%.1f\n",
-    gyroOffsetX,
-    gyroOffsetY,
-    gyroOffsetZ
-  );
+  Serial.println("[CAL] Calibration complete.");
+  Serial.printf("[CAL] Accel offsets: X=%.1f Y=%.1f Z=%.1f\n", accelOffsetX, accelOffsetY, accelOffsetZ);
+  Serial.printf("[CAL] Gyro offsets:  X=%.1f Y=%.1f Z=%.1f\n", gyroOffsetX, gyroOffsetY, gyroOffsetZ);
 }
 
 // ========================================================================
@@ -670,66 +371,21 @@ void mpuCalibrate() {
 // ========================================================================
 
 bool mpuReadCalibrated() {
-
-  int16_t ax;
-  int16_t ay;
-  int16_t az;
-
-  int16_t gx;
-  int16_t gy;
-  int16_t gz;
-
-  if (
-    !mpuReadRaw(
-      &ax,
-      &ay,
-      &az,
-      &gx,
-      &gy,
-      &gz
-    )
-  ) {
-
+  int16_t ax, ay, az, gx, gy, gz;
+  if (!mpuReadRaw(&ax, &ay, &az, &gx, &gy, &gz)) {
     return false;
   }
 
-  accelX_g =
-    (ax - accelOffsetX)
-    / ACCEL_LSB_PER_G;
+  accelX_g = (ax - accelOffsetX) / ACCEL_LSB_PER_G;
+  accelY_g = (ay - accelOffsetY) / ACCEL_LSB_PER_G;
+  accelZ_g = (az - accelOffsetZ) / ACCEL_LSB_PER_G;
 
-  accelY_g =
-    (ay - accelOffsetY)
-    / ACCEL_LSB_PER_G;
+  gyroX_dps = (gx - gyroOffsetX) / GYRO_LSB_PER_DPS;
+  gyroY_dps = (gy - gyroOffsetY) / GYRO_LSB_PER_DPS;
+  gyroZ_dps = (gz - gyroOffsetZ) / GYRO_LSB_PER_DPS;
 
-  accelZ_g =
-    (az - accelOffsetZ)
-    / ACCEL_LSB_PER_G;
-
-  gyroX_dps =
-    (gx - gyroOffsetX)
-    / GYRO_LSB_PER_DPS;
-
-  gyroY_dps =
-    (gy - gyroOffsetY)
-    / GYRO_LSB_PER_DPS;
-
-  gyroZ_dps =
-    (gz - gyroOffsetZ)
-    / GYRO_LSB_PER_DPS;
-
-  accelMag =
-    sqrtf(
-      accelX_g * accelX_g +
-      accelY_g * accelY_g +
-      accelZ_g * accelZ_g
-    );
-
-  gyroMag =
-    sqrtf(
-      gyroX_dps * gyroX_dps +
-      gyroY_dps * gyroY_dps +
-      gyroZ_dps * gyroZ_dps
-    );
+  accelMag = sqrtf(accelX_g * accelX_g + accelY_g * accelY_g + accelZ_g * accelZ_g);
+  gyroMag  = sqrtf(gyroX_dps * gyroX_dps + gyroY_dps * gyroY_dps + gyroZ_dps * gyroZ_dps);
 
   return true;
 }
@@ -739,124 +395,46 @@ bool mpuReadCalibrated() {
 // ========================================================================
 
 void bleInit() {
-
   Serial.println();
-  Serial.println(
-    "[BLE] Starting BLE..."
+  Serial.println("[BLE] Starting BLE...");
+
+  BLEDevice::init(DEVICE_NAME);
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new ServerCallbacks());
+
+  BLEService* pService = pServer->createService(SERVICE_UUID);
+
+  pTelemetryChar = pService->createCharacteristic(
+    CHAR_TELEMETRY_UUID, BLECharacteristic::PROPERTY_NOTIFY
   );
+  pTelemetryChar->addDescriptor(new BLE2902());
 
-  BLEDevice::init(
-    DEVICE_NAME
+  pCrashChar = pService->createCharacteristic(
+    CHAR_CRASH_UUID,
+    BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
   );
-
-  pServer =
-    BLEDevice::createServer();
-
-  pServer->setCallbacks(
-    new ServerCallbacks()
-  );
-
-  BLEService* pService =
-    pServer->createService(
-      SERVICE_UUID
-    );
-
-  // ----------------------------------------------------------------------
-  // TELEMETRY
-  // ----------------------------------------------------------------------
-
-  pTelemetryChar =
-    pService->createCharacteristic(
-      CHAR_TELEMETRY_UUID,
-      BLECharacteristic::PROPERTY_NOTIFY
-    );
-
-  pTelemetryChar->addDescriptor(
-    new BLE2902()
-  );
-
-  // ----------------------------------------------------------------------
-  // CRASH
-  // ----------------------------------------------------------------------
-
-  pCrashChar =
-    pService->createCharacteristic(
-      CHAR_CRASH_UUID,
-      BLECharacteristic::PROPERTY_NOTIFY |
-      BLECharacteristic::PROPERTY_READ
-    );
-
-  pCrashChar->addDescriptor(
-    new BLE2902()
-  );
-
+  pCrashChar->addDescriptor(new BLE2902());
   uint8_t initialCrash = 0;
+  pCrashChar->setValue(&initialCrash, 1);
 
-  pCrashChar->setValue(
-    &initialCrash,
-    1
+  pStatusChar = pService->createCharacteristic(
+    CHAR_STATUS_UUID, BLECharacteristic::PROPERTY_READ
   );
-
-  // ----------------------------------------------------------------------
-  // STATUS
-  // ----------------------------------------------------------------------
-
-  pStatusChar =
-    pService->createCharacteristic(
-      CHAR_STATUS_UUID,
-      BLECharacteristic::PROPERTY_READ
-    );
-
-  pStatusChar->setValue(
-    "ResQRide Helmet v1.0 | Ready | 100Hz"
-  );
+  pStatusChar->setValue("ResQRide Helmet v1.0 | 1D CNN TinyML | 100Hz");
 
   pService->start();
 
-  BLEAdvertising* advertising =
-    BLEDevice::getAdvertising();
-
-  advertising->addServiceUUID(
-    SERVICE_UUID
-  );
-
-  advertising->setScanResponse(
-    true
-  );
-
-  advertising->setMinPreferred(
-    0x06
-  );
-
-  advertising->setMinPreferred(
-    0x12
-  );
+  BLEAdvertising* advertising = BLEDevice::getAdvertising();
+  advertising->addServiceUUID(SERVICE_UUID);
+  advertising->setScanResponse(true);
+  advertising->setMinPreferred(0x06);
+  advertising->setMinPreferred(0x12);
 
   BLEDevice::startAdvertising();
 
-  Serial.println(
-    "[BLE] BLE started successfully."
-  );
-
-  Serial.print(
-    "[BLE] Device: "
-  );
-
-  Serial.println(
-    DEVICE_NAME
-  );
-
-  Serial.print(
-    "[BLE] Service: "
-  );
-
-  Serial.println(
-    SERVICE_UUID
-  );
-
-  Serial.println(
-    "[BLE] Advertising..."
-  );
+  Serial.println("[BLE] BLE started successfully.");
+  Serial.printf("[BLE] Device: %s\n", DEVICE_NAME);
+  Serial.println("[BLE] Advertising...");
 }
 
 // ========================================================================
@@ -864,30 +442,14 @@ void bleInit() {
 // ========================================================================
 
 void bleSendTelemetry() {
-
-  if (
-    !deviceConnected
-  ) {
-
-    return;
-  }
+  if (!deviceConnected) return;
 
   float payload[6] = {
-
-    accelX_g,
-    accelY_g,
-    accelZ_g,
-
-    gyroX_dps,
-    gyroY_dps,
-    gyroZ_dps
+    accelX_g, accelY_g, accelZ_g,
+    gyroX_dps, gyroY_dps, gyroZ_dps
   };
 
-  pTelemetryChar->setValue(
-    (uint8_t*)payload,
-    sizeof(payload)
-  );
-
+  pTelemetryChar->setValue((uint8_t*)payload, sizeof(payload));
   pTelemetryChar->notify();
 }
 
@@ -895,223 +457,106 @@ void bleSendTelemetry() {
 // BLE CRASH ALERT
 // ========================================================================
 
-void bleSendCrashAlert(
-  bool crash
-) {
+void bleSendCrashAlert(bool crash) {
+  uint8_t value = crash ? 0x01 : 0x00;
+  pCrashChar->setValue(&value, 1);
 
-  uint8_t value =
-    crash ? 0x01 : 0x00;
-
-  pCrashChar->setValue(
-    &value,
-    1
-  );
-
-  if (
-    deviceConnected
-  ) {
-
+  if (deviceConnected) {
     pCrashChar->notify();
   }
 
-  Serial.printf(
-    "[BLE] Crash event: %s\n",
-    crash
-      ? "CRASH"
-      : "CANCELLED"
-  );
+  Serial.printf("[BLE] Crash event: %s\n", crash ? "CRASH" : "CANCELLED");
 }
 
 // ========================================================================
-// BUZZER START
+// BUZZER START / STOP / UPDATE
 // ========================================================================
 
 void buzzerStart() {
-
-  buzzerStartTime =
-    millis();
-
+  buzzerStartTime = millis();
   buzzerActive = true;
 
-  bool attached =
-    ledcAttach(
-      BUZZER_PIN,
-      BUZZER_FREQ_HZ,
-      BUZZER_RESOLUTION
-    );
-
+  bool attached = ledcAttach(BUZZER_PIN, BUZZER_FREQ_HZ, BUZZER_RESOLUTION);
   if (!attached) {
-
-    Serial.println(
-      "[BUZZER] ERROR: LEDC attach failed!"
-    );
-
+    Serial.println("[BUZZER] ERROR: LEDC attach failed!");
     buzzerActive = false;
-
     return;
   }
 
-  ledcWrite(
-    BUZZER_PIN,
-    128
-  );
-
-  Serial.println(
-    "[BUZZER] ALERT SOUNDING!"
-  );
-
-  Serial.println(
-    "[BUZZER] Flip switch to cancel."
-  );
+  ledcWrite(BUZZER_PIN, 128);
+  Serial.println("[BUZZER] ALERT SOUNDING!");
+  Serial.println("[BUZZER] Flip switch to cancel.");
 }
-
-// ========================================================================
-// BUZZER STOP
-// ========================================================================
 
 void buzzerStop() {
-
-  if (
-    buzzerActive
-  ) {
-
-    ledcWrite(
-      BUZZER_PIN,
-      0
-    );
-
-    ledcDetach(
-      BUZZER_PIN
-    );
+  if (buzzerActive) {
+    ledcWrite(BUZZER_PIN, 0);
+    ledcDetach(BUZZER_PIN);
   }
-
   buzzerActive = false;
-
-  digitalWrite(
-    BUZZER_PIN,
-    LOW
-  );
-
-  Serial.println(
-    "[BUZZER] Silenced."
-  );
+  digitalWrite(BUZZER_PIN, LOW);
+  Serial.println("[BUZZER] Silenced.");
 }
-
-// ========================================================================
-// BUZZER UPDATE
-// ========================================================================
 
 void buzzerUpdate() {
-
-  if (
-    !buzzerActive
-  ) {
-
-    return;
-  }
-
-  if (
-    millis() - buzzerStartTime
-    >= BUZZER_DURATION_MS
-  ) {
-
+  if (!buzzerActive) return;
+  if (millis() - buzzerStartTime >= BUZZER_DURATION_MS) {
     buzzerStop();
-
-    Serial.println(
-      "[BUZZER] 15-second timeout."
-    );
+    Serial.println("[BUZZER] 15-second timeout reached.");
   }
 }
 
 // ========================================================================
-// CRASH DETECTION
+// CRASH DETECTION (1D CNN INFERENCE)
 // ========================================================================
 
 void checkForCrash() {
-
-  if (
-    crashDetected
-  ) {
-
+  if (crashDetected || interpreter == nullptr) {
     return;
   }
 
-  bool accelTriggered =
-    accelMag >= ACCEL_THRESHOLD_G;
+  // Run CNN inference every 10 samples (every 100 ms)
+  sampleCountSinceInference++;
+  if (sampleCountSinceInference < INFERENCE_STRIDE) {
+    return;
+  }
+  sampleCountSinceInference = 0;
 
-  bool gyroTriggered =
-    gyroMag >= GYRO_THRESHOLD_DPS;
-
-  if (
-    accelTriggered &&
-    gyroTriggered
-  ) {
-
-    sustainedHitCount++;
-
-    Serial.printf(
-      "[CRASH] Threshold sample %d/%d | "
-      "Accel=%.2fg Gyro=%.1fdps\n",
-      sustainedHitCount,
-      SUSTAINED_COUNT,
-      accelMag,
-      gyroMag
-    );
-
-    if (
-      sustainedHitCount >=
-      SUSTAINED_COUNT
-    ) {
-
-      crashDetected = true;
-      switchWasOff = false;
-      initialSwitchState = digitalRead(CANCEL_BTN_PIN);
-
-      Serial.println();
-      Serial.println(
-        "========================================"
-      );
-
-      Serial.println(
-        "       !!! CRASH DETECTED !!!"
-      );
-
-      Serial.println(
-        "========================================"
-      );
-
-      Serial.printf(
-        "Acceleration: %.2f g\n",
-        accelMag
-      );
-
-      Serial.printf(
-        "Gyroscope: %.1f deg/s\n",
-        gyroMag
-      );
-
-      Serial.println(
-        "Alert activated (15s window)."
-      );
-
-      Serial.println(
-        "Turn switch OFF then ON to cancel."
-      );
-
-      Serial.println(
-        "========================================"
-      );
-
-      buzzerStart();
-
-      bleSendCrashAlert(
-        true
-      );
+  // Unroll circular buffer into chronological order for model input tensor
+  for (int i = 0; i < CRASH_WINDOW_LEN; ++i) {
+    int idx = (imuBufferHead + i) % CRASH_WINDOW_LEN;
+    for (int c = 0; c < CRASH_CHANNELS; ++c) {
+      inputTensor->data.f[i * CRASH_CHANNELS + c] = imuBuffer[idx][c];
     }
+  }
 
-  } else {
+  // Run 1D CNN Inference (< 8 ms on ESP32)
+  if (interpreter->Invoke() != kTfLiteOk) {
+    Serial.println("[TFLM] ERROR: Invoke() failed!");
+    return;
+  }
 
-    sustainedHitCount = 0;
+  latestCrashProb = outputTensor->data.f[0];
+
+  // Check against tuned model decision threshold (from model_data.h)
+  if (latestCrashProb >= CRASH_THRESHOLD) {
+    crashDetected = true;
+    switchWasOff = false;
+    initialSwitchState = digitalRead(CANCEL_BTN_PIN);
+
+    Serial.println();
+    Serial.println("========================================");
+    Serial.println("       !!! CRASH DETECTED (1D CNN) !!!");
+    Serial.println("========================================");
+    Serial.printf("Model Confidence: %.2f%%\n", latestCrashProb * 100.0f);
+    Serial.printf("Acceleration:     %.2f g\n", accelMag);
+    Serial.printf("Gyroscope:        %.1f deg/s\n", gyroMag);
+    Serial.println("Alert activated (15s window).");
+    Serial.println("Turn switch OFF then ON to cancel.");
+    Serial.println("========================================");
+
+    buzzerStart();
+    bleSendCrashAlert(true);
   }
 }
 
@@ -1120,7 +565,6 @@ void checkForCrash() {
 // ========================================================================
 
 void handleCancelButton() {
-
   static int lastReading = -1;
   static unsigned long lastDebounceTime = 0;
   static int currentSwitchState = -1;
@@ -1143,35 +587,20 @@ void handleCancelButton() {
       currentSwitchState = reading;
 
       if (crashDetected) {
-        // Switch changed away from initial armed state (user turned switch OFF)
         if (currentSwitchState != initialSwitchState) {
           switchWasOff = true;
-          Serial.println(
-            "[SWITCH] Switch turned OFF during alert window."
-          );
-        }
-        // Switch returned to initial armed state (user turned switch back ON)
-        else if (switchWasOff && (currentSwitchState == initialSwitchState)) {
+          Serial.println("[SWITCH] Switch turned OFF during alert window.");
+        } else if (switchWasOff && (currentSwitchState == initialSwitchState)) {
           Serial.println();
-          Serial.println(
-            "[CANCEL] False alarm cancelled! Switch cycled (OFF -> ON)."
-          );
+          Serial.println("[CANCEL] False alarm cancelled! Switch cycled (OFF -> ON).");
 
           crashDetected = false;
-          sustainedHitCount = 0;
+          latestCrashProb = 0.0f;
           switchWasOff = false;
 
           buzzerStop();
-
-          bleSendCrashAlert(
-            false
-          );
+          bleSendCrashAlert(false);
         }
-      } else {
-        Serial.printf(
-          "[SWITCH] Switch state: %s\n",
-          currentSwitchState == LOW ? "ON / CLOSED (LOW)" : "OFF / OPEN (HIGH)"
-        );
       }
     }
   }
@@ -1182,42 +611,15 @@ void handleCancelButton() {
 // ========================================================================
 
 void updateLEDs() {
+  digitalWrite(LED_POWER_PIN, HIGH);
 
-  // Power LED
-
-  digitalWrite(
-    LED_POWER_PIN,
-    HIGH
-  );
-
-  // BLE LED
-
-  if (
-    deviceConnected
-  ) {
-
-    digitalWrite(
-      LED_BLE_PIN,
-      HIGH
-    );
-
+  if (deviceConnected) {
+    digitalWrite(LED_BLE_PIN, HIGH);
   } else {
-
-    if (
-      millis() - lastBleBlink
-      >= BLE_BLINK_INTERVAL
-    ) {
-
-      lastBleBlink =
-        millis();
-
-      bleLedState =
-        !bleLedState;
-
-      digitalWrite(
-        LED_BLE_PIN,
-        bleLedState
-      );
+    if (millis() - lastBleBlink >= BLE_BLINK_INTERVAL) {
+      lastBleBlink = millis();
+      bleLedState = !bleLedState;
+      digitalWrite(LED_BLE_PIN, bleLedState);
     }
   }
 }
@@ -1227,50 +629,18 @@ void updateLEDs() {
 // ========================================================================
 
 void printLiveData() {
-
   static int counter = 0;
-
   counter++;
-
-  if (
-    counter < 50
-  ) {
-
-    return;
-  }
-
+  if (counter < 50) return; // Print every 500 ms
   counter = 0;
 
   Serial.printf(
-    "[IMU] "
-    "A X=%+5.2f "
-    "Y=%+5.2f "
-    "Z=%+5.2f "
-    "|A|=%5.2fg  "
-    "G X=%+6.1f "
-    "Y=%+6.1f "
-    "Z=%+6.1f "
-    "|G|=%6.1f dps  "
-    "BLE=%s "
-    "CRASH=%s\n",
-
-    accelX_g,
-    accelY_g,
-    accelZ_g,
+    "[IMU] A=%4.2fg G=%5.1fdps | CNN_Prob=%5.1f%% | BLE=%s | CRASH=%s\n",
     accelMag,
-
-    gyroX_dps,
-    gyroY_dps,
-    gyroZ_dps,
     gyroMag,
-
-    deviceConnected
-      ? "CONNECTED"
-      : "ADVERTISING",
-
-    crashDetected
-      ? "YES"
-      : "NO"
+    latestCrashProb * 100.0f,
+    deviceConnected ? "CONNECTED" : "ADVERTISING",
+    crashDetected ? "YES" : "NO"
   );
 }
 
@@ -1279,293 +649,138 @@ void printLiveData() {
 // ========================================================================
 
 void setup() {
-
-  Serial.begin(
-    115200
-  );
-
+  Serial.begin(115200);
   delay(2000);
 
   Serial.println();
-  Serial.println(
-    "=============================================="
-  );
+  Serial.println("==============================================");
+  Serial.println("      ResQRide Smart Helmet v1.0");
+  Serial.println("      ESP32 + MPU6050 + 1D CNN TinyML");
+  Serial.println("      100Hz | Deep Learning Collision Detection");
+  Serial.println("==============================================");
 
-  Serial.println(
-    "      ResQRide Smart Helmet v1.0"
-  );
+  // Pin Configuration
+  pinMode(LED_POWER_PIN, OUTPUT);
+  pinMode(LED_BLE_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(CANCEL_BTN_PIN, INPUT_PULLUP);
 
-  Serial.println(
-    "      ESP32 + MPU6050 + BLE"
-  );
+  digitalWrite(LED_POWER_PIN, HIGH);
+  digitalWrite(LED_BLE_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
 
-  Serial.println(
-    "      100Hz | TEST MODE: 1.5g + 80dps"
-  );
-
-  Serial.println(
-    "=============================================="
-  );
-
-  // ----------------------------------------------------------------------
-  // PINS
-  // ----------------------------------------------------------------------
-
-  pinMode(
-    LED_POWER_PIN,
-    OUTPUT
-  );
-
-  pinMode(
-    LED_BLE_PIN,
-    OUTPUT
-  );
-
-  pinMode(
-    BUZZER_PIN,
-    OUTPUT
-  );
-
-  pinMode(
-    CANCEL_BTN_PIN,
-    INPUT_PULLUP
-  );
-
-  digitalWrite(
-    LED_POWER_PIN,
-    HIGH
-  );
-
-  digitalWrite(
-    LED_BLE_PIN,
-    LOW
-  );
-
-  digitalWrite(
-    BUZZER_PIN,
-    LOW
-  );
-
-  // ----------------------------------------------------------------------
-  // I2C
-  // ----------------------------------------------------------------------
-
+  // I2C Setup
   Serial.println();
-  Serial.println(
-    "[I2C] Starting I2C..."
-  );
+  Serial.println("[I2C] Starting I2C...");
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(400000);
 
-  Wire.begin(
-    SDA_PIN,
-    SCL_PIN
-  );
-
-  Wire.setClock(
-    400000
-  );
-
-  Serial.println(
-    "[I2C] SDA = GPIO 21"
-  );
-
-  Serial.println(
-    "[I2C] SCL = GPIO 22"
-  );
-
-  // ----------------------------------------------------------------------
-  // MPU6050
-  // ----------------------------------------------------------------------
-
-  if (
-    !mpuInit()
-  ) {
-
-    Serial.println();
-    Serial.println(
-      "[FATAL] MPU6050 not found."
-    );
-
-    Serial.println(
-      "[FATAL] Check wiring."
-    );
-
+  // Initialize MPU6050
+  if (!mpuInit()) {
+    Serial.println("[FATAL] MPU6050 not found. Check wiring.");
     while (true) {
-
-      digitalWrite(
-        LED_POWER_PIN,
-        !digitalRead(
-          LED_POWER_PIN
-        )
-      );
-
+      digitalWrite(LED_POWER_PIN, !digitalRead(LED_POWER_PIN));
       delay(250);
     }
   }
 
-  // ----------------------------------------------------------------------
-  // CALIBRATION
-  // ----------------------------------------------------------------------
-
+  // Calibrate MPU6050
   mpuCalibrate();
 
-  // ----------------------------------------------------------------------
-  // BUZZER TEST
-  // ----------------------------------------------------------------------
-
+  // Initialize 1D CNN Model (TensorFlow Lite for Microcontrollers)
   Serial.println();
-  Serial.println(
-    "[BOOT] Testing buzzer..."
-  );
-
-  bool buzzerAttached =
-    ledcAttach(
-      BUZZER_PIN,
-      BUZZER_FREQ_HZ,
-      BUZZER_RESOLUTION
-    );
-
-  if (
-    buzzerAttached
-  ) {
-
-    ledcWrite(
-      BUZZER_PIN,
-      128
-    );
-
-    delay(200);
-
-    ledcWrite(
-      BUZZER_PIN,
-      0
-    );
-
-    ledcDetach(
-      BUZZER_PIN
-    );
-
-    digitalWrite(
-      BUZZER_PIN,
-      LOW
-    );
-
-    Serial.println(
-      "[BOOT] Buzzer OK."
-    );
-
+  Serial.println("[TFLM] Initializing ResQRide 1D CNN Model...");
+  tflModel = tflite::GetModel(g_model);
+  if (tflModel->version() != TFLITE_SCHEMA_VERSION) {
+    Serial.println("[TFLM] ERROR: Model schema mismatch!");
   } else {
+    static tflite::AllOpsResolver resolver;
+    static tflite::MicroInterpreter static_interpreter(
+        tflModel, resolver, tensor_arena, kTensorArenaSize);
+    interpreter = &static_interpreter;
 
-    Serial.println(
-      "[BOOT] WARNING: Buzzer failed."
-    );
+    if (interpreter->AllocateTensors() != kTfLiteOk) {
+      Serial.println("[TFLM] ERROR: AllocateTensors() failed!");
+    } else {
+      inputTensor = interpreter->input(0);
+      outputTensor = interpreter->output(0);
+      Serial.println("[TFLM] 1D CNN Model initialized successfully!");
+      Serial.printf("[TFLM] Decision Threshold: %.1f%%\n", CRASH_THRESHOLD * 100.0f);
+    }
   }
 
-  // ----------------------------------------------------------------------
-  // BLE
-  // ----------------------------------------------------------------------
+  // Test Buzzer
+  Serial.println();
+  Serial.println("[BOOT] Testing buzzer...");
+  bool buzzerAttached = ledcAttach(BUZZER_PIN, BUZZER_FREQ_HZ, BUZZER_RESOLUTION);
+  if (buzzerAttached) {
+    ledcWrite(BUZZER_PIN, 128);
+    delay(200);
+    ledcWrite(BUZZER_PIN, 0);
+    ledcDetach(BUZZER_PIN);
+    digitalWrite(BUZZER_PIN, LOW);
+    Serial.println("[BOOT] Buzzer OK.");
+  }
 
+  // Initialize BLE
   bleInit();
 
-  // ----------------------------------------------------------------------
-  // START SAMPLING
-  // ----------------------------------------------------------------------
-
-  lastSampleTime =
-    micros();
+  // Start Sampling
+  lastSampleTime = micros();
 
   Serial.println();
-  Serial.println(
-    "=============================================="
-  );
-
-  Serial.println(
-    "[READY] HELMET ARMED"
-  );
-
-  Serial.println(
-    "[READY] Monitoring at 100Hz."
-  );
-
-  Serial.println(
-    "[READY] Crash threshold: 1.5g + 80dps (TEST MODE)"
-  );
-
-  Serial.println(
-    "[READY] Waiting for phone..."
-  );
-
-  Serial.println(
-    "=============================================="
-  );
-
+  Serial.println("==============================================");
+  Serial.println("[READY] HELMET ARMED & MONITORING (100Hz)");
+  Serial.println("[READY] 1D CNN Real-Time Accident Inference Active");
+  Serial.println("==============================================");
   Serial.println();
 }
 
 // ========================================================================
-// LOOP
+// MAIN LOOP
 // ========================================================================
 
 void loop() {
-
-  unsigned long now =
-    micros();
-
-  if (
-    now - lastSampleTime
-    < SAMPLE_INTERVAL_US
-  ) {
-
+  unsigned long now = micros();
+  if (now - lastSampleTime < SAMPLE_INTERVAL_US) {
     return;
   }
+  lastSampleTime = now;
 
-  lastSampleTime =
-    now;
-
-  // Read IMU
-
-  if (
-    !mpuReadCalibrated()
-  ) {
-
+  // 1. Read calibrated IMU
+  if (!mpuReadCalibrated()) {
     static unsigned long lastError = 0;
-
-    if (
-      millis() - lastError
-      > 1000
-    ) {
-
-      lastError =
-        millis();
-
-      Serial.println(
-        "[MPU6050] WARNING: Read failed."
-      );
+    if (millis() - lastError > 1000) {
+      lastError = millis();
+      Serial.println("[MPU6050] WARNING: Read failed.");
     }
-
     return;
   }
 
-  // Crash detection
+  // 2. Feed sample into the circular buffer for the 1D CNN
+  imuBuffer[imuBufferHead][0] = accelX_g;
+  imuBuffer[imuBufferHead][1] = accelY_g;
+  imuBuffer[imuBufferHead][2] = accelZ_g;
+  imuBuffer[imuBufferHead][3] = gyroX_dps;
+  imuBuffer[imuBufferHead][4] = gyroY_dps;
+  imuBuffer[imuBufferHead][5] = gyroZ_dps;
+  imuBufferHead = (imuBufferHead + 1) % CRASH_WINDOW_LEN;
 
+  // 3. 1D CNN Crash detection inference
   checkForCrash();
 
-  // BLE telemetry
-
+  // 4. BLE telemetry stream
   bleSendTelemetry();
 
-  // Cancel button
-
+  // 5. Check cancel button
   handleCancelButton();
 
-  // Buzzer
-
+  // 6. Update buzzer timer
   buzzerUpdate();
 
-  // LEDs
-
+  // 7. Update status LEDs
   updateLEDs();
 
-  // Serial
-
+  // 8. Output telemetry to Serial Monitor
   printLiveData();
 }
