@@ -1,5 +1,5 @@
 // =========================================================================
-// ResQRide Smart Helmet Firmware
+// ResQRide Smart Helmet Firmware — HARDWARE TEST SKETCH
 //
 // Board: ESP32-WROOM-32
 // Sensor: MPU6050 via I2C
@@ -7,17 +7,14 @@
 //
 // ESP32 Arduino Core: 3.x
 //
-// MPU6050:
-//   - NO WHO_AM_I CHECK
-//   - Automatically tries 0x68 and 0x69
-//
-// Crash Detection:
-//   Acceleration >= 4g
+// EXACT SAME CODE AS ResQRide.ino WITH LOWERED THRESHOLDS FOR TESTING:
+//   Acceleration >= 1.5g  (production: 4.0g)
 //   AND
-//   Gyroscope >= 300 deg/s
-//   FOR 3 consecutive samples
-//   = 30 ms at 100 Hz
+//   Gyroscope >= 80 deg/s (production: 300.0 deg/s)
+//   FOR 2 consecutive samples (production: 3 samples)
+//   = 20 ms at 100 Hz
 //
+// Allows testing crash detection & buzzer by shaking the helmet by hand.
 // =========================================================================
 
 #include <Wire.h>
@@ -67,13 +64,13 @@ uint8_t mpuAddress = 0;
 #define GYRO_LSB_PER_DPS 16.4f
 
 // ========================================================================
-// CRASH THRESHOLDS
+// CRASH THRESHOLDS (LOWERED FOR HAND-SHAKE TESTING)
 // ========================================================================
 
-const float ACCEL_THRESHOLD_G  = 4.0f;
-const float GYRO_THRESHOLD_DPS = 300.0f;
+const float ACCEL_THRESHOLD_G  = 1.5f;   // Lowered from 4.0g
+const float GYRO_THRESHOLD_DPS = 80.0f;  // Lowered from 300.0 dps
 
-const int SUSTAINED_COUNT = 3;
+const int SUSTAINED_COUNT = 2;           // Lowered from 3 samples
 
 // ========================================================================
 // TIMING
@@ -156,10 +153,12 @@ unsigned long buzzerStartTime = 0;
 unsigned long lastSampleTime = 0;
 
 // ========================================================================
-// BUTTON
+// CANCEL SWITCH (GPIO 4: Turn OFF then back ON to cancel false alarm)
 // ========================================================================
 
 unsigned long lastButtonPress = 0;
+bool switchWasOff = false;
+int initialSwitchState = LOW;
 
 // ========================================================================
 // BLE
@@ -962,7 +961,7 @@ void buzzerStart() {
   );
 
   Serial.println(
-    "[BUZZER] Press cancel button."
+    "[BUZZER] Flip switch to cancel."
   );
 }
 
@@ -1065,6 +1064,8 @@ void checkForCrash() {
     ) {
 
       crashDetected = true;
+      switchWasOff = false;
+      initialSwitchState = digitalRead(CANCEL_BTN_PIN);
 
       Serial.println();
       Serial.println(
@@ -1090,7 +1091,11 @@ void checkForCrash() {
       );
 
       Serial.println(
-        "Alert activated."
+        "Alert activated (15s window)."
+      );
+
+      Serial.println(
+        "Turn switch OFF then ON to cancel."
       );
 
       Serial.println(
@@ -1111,55 +1116,64 @@ void checkForCrash() {
 }
 
 // ========================================================================
-// CANCEL BUTTON
+// CANCEL SWITCH (Turn OFF then back ON during alert window to cancel)
 // ========================================================================
 
 void handleCancelButton() {
 
-  if (
-    digitalRead(
-      CANCEL_BTN_PIN
-    ) != LOW
-  ) {
+  static int lastReading = -1;
+  static unsigned long lastDebounceTime = 0;
+  static int currentSwitchState = -1;
 
-    return;
+  int reading = digitalRead(CANCEL_BTN_PIN);
+
+  if (lastReading == -1) {
+    lastReading = reading;
+    currentSwitchState = reading;
+    initialSwitchState = reading;
   }
 
-  if (
-    millis() - lastButtonPress
-    < DEBOUNCE_MS
-  ) {
-
-    return;
+  if (reading != lastReading) {
+    lastDebounceTime = millis();
+    lastReading = reading;
   }
 
-  lastButtonPress =
-    millis();
+  if ((millis() - lastDebounceTime) >= 50) {
+    if (reading != currentSwitchState) {
+      currentSwitchState = reading;
 
-  if (
-    crashDetected
-  ) {
+      if (crashDetected) {
+        // Switch changed away from initial armed state (user turned switch OFF)
+        if (currentSwitchState != initialSwitchState) {
+          switchWasOff = true;
+          Serial.println(
+            "[SWITCH] Switch turned OFF during alert window."
+          );
+        }
+        // Switch returned to initial armed state (user turned switch back ON)
+        else if (switchWasOff && (currentSwitchState == initialSwitchState)) {
+          Serial.println();
+          Serial.println(
+            "[CANCEL] False alarm cancelled! Switch cycled (OFF -> ON)."
+          );
 
-    Serial.println();
-    Serial.println(
-      "[CANCEL] Rider cancelled alert."
-    );
+          crashDetected = false;
+          sustainedHitCount = 0;
+          switchWasOff = false;
 
-    crashDetected = false;
+          buzzerStop();
 
-    sustainedHitCount = 0;
-
-    buzzerStop();
-
-    bleSendCrashAlert(
-      false
-    );
-
-  } else {
-
-    Serial.println(
-      "[BTN] Button pressed."
-    );
+          bleSendCrashAlert(
+            false
+          );
+        }
+      } else {
+        Serial.printf(
+          "[SWITCH] Switch state: %s\n",
+          currentSwitchState == LOW ? "ON / CLOSED (LOW)" : "OFF / OPEN (HIGH)"
+        );
+      }
+    }
   }
 }
 
@@ -1286,7 +1300,7 @@ void setup() {
   );
 
   Serial.println(
-    "      100Hz | 4g + 300dps"
+    "      100Hz | TEST MODE: 1.5g + 80dps"
   );
 
   Serial.println(
@@ -1473,7 +1487,7 @@ void setup() {
   );
 
   Serial.println(
-    "[READY] Crash threshold: 4g + 300dps"
+    "[READY] Crash threshold: 1.5g + 80dps (TEST MODE)"
   );
 
   Serial.println(
