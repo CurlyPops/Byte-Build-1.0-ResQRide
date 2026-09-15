@@ -30,12 +30,14 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.aurafarmers.resqride.ResQRideApplication
 import com.aurafarmers.resqride.ble.BleManager
 import com.aurafarmers.resqride.service.RideTrackingService
+import com.aurafarmers.resqride.data.network.UserProfileSyncService
 import com.aurafarmers.resqride.ui.auth.AuthScreen
 import com.aurafarmers.resqride.ui.screens.*
 import com.aurafarmers.resqride.ui.theme.EmeraldPrimary
 import com.aurafarmers.resqride.ui.theme.EmergencyRed
 import com.aurafarmers.resqride.ui.theme.ResQRideTheme
 import com.aurafarmers.resqride.util.PermissionHelper
+import kotlinx.coroutines.launch
 
 sealed class Screen(val title: String, val icon: ImageVector) {
     object Dashboard : Screen("Dashboard", Icons.Default.Dashboard)
@@ -75,6 +77,8 @@ class MainActivity : ComponentActivity() {
             val rideMetrics by RideTrackingService.rideMetrics.collectAsState()
 
             var currentScreen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
+            val scope = rememberCoroutineScope()
+            val profileSyncService = remember { UserProfileSyncService(this@MainActivity) }
 
             // Dynamic permission tracking
             var isSmsGranted by remember { mutableStateOf(PermissionHelper.isSmsPermissionGranted(this)) }
@@ -261,7 +265,12 @@ class MainActivity : ComponentActivity() {
                                     Screen.Family -> FamilyScreen(userProfile = userProfile)
                                     Screen.Medical -> MedicalScreen(
                                         userProfile = userProfile,
-                                        onUpdateProfile = { updated -> userPreferences.saveUserProfile(updated) }
+                                        onUpdateProfile = { updated ->
+                                            userPreferences.saveUserProfile(updated)
+                                            scope.launch {
+                                                profileSyncService.syncProfileToCloud(updated, contacts)
+                                            }
+                                        }
                                     )
                                     Screen.Telemetry -> TelemetryScreen(
                                         liveImuStream = bleManager.liveImuStream,
@@ -274,7 +283,12 @@ class MainActivity : ComponentActivity() {
                                         themeMode = themeMode,
                                         contacts = contacts,
                                         onThemeChanged = { userPreferences.setThemeMode(it) },
-                                        onContactsUpdated = { userPreferences.saveContacts(it) },
+                                        onContactsUpdated = { updatedContacts ->
+                                            userPreferences.saveContacts(updatedContacts)
+                                            scope.launch {
+                                                profileSyncService.syncProfileToCloud(userProfile, updatedContacts)
+                                            }
+                                        },
                                         onLogoutClicked = { userPreferences.logout() }
                                     )
                                 }

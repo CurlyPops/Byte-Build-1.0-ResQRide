@@ -1,4 +1,5 @@
 from io import BytesIO
+import json
 from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
@@ -159,3 +160,130 @@ def test_delete_file_success(client):
             assert data["file_id"] == "doc123"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_save_user_profile_success(client):
+    mock_supabase = MagicMock()
+    mock_supabase.storage.from_().upload.return_value = {"Key": "profiles/test_rider_1.json"}
+
+    payload = {
+        "uid": "test_rider_1",
+        "fullName": "Rahul Sharma",
+        "email": "rahul@example.com",
+        "phone": "+91 9876543210",
+        "age": 26,
+        "gender": "Male",
+        "bloodGroup": "O+",
+        "allergies": ["Penicillin"],
+        "chronicConditions": ["Asthma"],
+        "emergencyNotes": "Carry inhaler",
+        "emergencyContacts": [
+            {
+                "name": "Anil Sharma",
+                "phone": "+91 9876500000",
+                "relationship": "Father",
+                "isPrimary": True
+            }
+        ]
+    }
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        response = client.post("/api/profile", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["user_id"] == "test_rider_1"
+        assert "https://resqride-oqhy.onrender.com/med/test_rider_1" in data["public_url"]
+
+
+def test_get_user_profile_success(client):
+    mock_supabase = MagicMock()
+    sample_profile = {
+        "uid": "test_rider_1",
+        "fullName": "Rahul Sharma",
+        "bloodGroup": "O+",
+        "allergies": ["Penicillin"]
+    }
+    mock_supabase.storage.from_().download.return_value = json.dumps(sample_profile).encode()
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        response = client.get("/api/profile/test_rider_1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["profile"]["fullName"] == "Rahul Sharma"
+        assert data["profile"]["bloodGroup"] == "O+"
+
+
+def test_get_user_profile_not_found(client):
+    mock_supabase = MagicMock()
+    mock_supabase.storage.from_().download.side_effect = Exception("Object not found")
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        response = client.get("/api/profile/non_existent_rider")
+        assert response.status_code == 404
+
+
+def test_dynamic_medical_triage_html(client):
+    mock_supabase = MagicMock()
+    sample_profile = {
+        "uid": "rider_999",
+        "fullName": "Amit Verma",
+        "phone": "+91 9998887770",
+        "age": 28,
+        "gender": "Male",
+        "bloodGroup": "B+",
+        "allergies": ["Aspirin"],
+        "chronicConditions": ["Type 1 Diabetes"],
+        "emergencyNotes": "Insulin dependent",
+        "emergencyContacts": [
+            {
+                "name": "Pooja Verma",
+                "phone": "+91 9998887771",
+                "relationship": "Spouse",
+                "isPrimary": True
+            }
+        ]
+    }
+    mock_supabase.storage.from_().download.return_value = json.dumps(sample_profile).encode()
+    mock_supabase.storage.from_().list.return_value = [
+        {"name": "prescription_scan.pdf"}
+    ]
+    mock_supabase.storage.from_().create_signed_url.return_value = {
+        "signedURL": "https://fxmyholhnknltmbusvds.supabase.co/storage/v1/object/sign/pdfs/rider_999/prescription_scan.pdf?token=dummy"
+    }
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        # 1. Test HTML endpoint
+        res_html = client.get("/med/rider_999")
+        assert res_html.status_code == 200
+        assert "text/html" in res_html.headers.get("content-type", "")
+        content = res_html.text
+        assert "Amit Verma" in content
+        assert "B+" in content
+        assert "Aspirin" in content
+        assert "Type 1 Diabetes" in content
+        assert "Pooja Verma" in content
+        assert "prescription_scan.pdf" in content
+        assert "https://resqride-oqhy.onrender.com" in content
+
+        # 2. Test JSON API endpoint
+        res_json = client.get("/api/med/rider_999")
+        assert res_json.status_code == 200
+        j_data = res_json.json()
+        assert j_data["success"] is True
+        assert j_data["data"]["profile"]["fullName"] == "Amit Verma"
+        assert len(j_data["data"]["prescription_documents"]) == 1
+
+
+def test_dynamic_medical_triage_html_not_found(client):
+    mock_supabase = MagicMock()
+    mock_supabase.storage.from_().download.side_effect = Exception("File not found")
+    mock_supabase.storage.from_().list.return_value = []
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        res_html = client.get("/med/unknown_rider_id")
+        assert res_html.status_code == 200
+        assert "Rider Profile Pending Sync" in res_html.text
+        assert "unknown_rider_id" in res_html.text
+

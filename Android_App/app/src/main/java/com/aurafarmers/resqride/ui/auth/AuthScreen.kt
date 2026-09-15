@@ -36,6 +36,7 @@ import com.aurafarmers.resqride.auth.FirebaseAuthManager
 import com.aurafarmers.resqride.data.model.EmergencyContact
 import com.aurafarmers.resqride.data.model.UserProfile
 import com.aurafarmers.resqride.data.network.PdfStorageService
+import com.aurafarmers.resqride.data.network.UserProfileSyncService
 import com.aurafarmers.resqride.data.pref.UserPreferences
 import com.aurafarmers.resqride.ui.theme.*
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -97,6 +98,11 @@ fun AuthScreen(
                                 emailInput = authResult.user.email ?: account.email ?: ""
                                 fullNameInput = authResult.user.displayName ?: account.displayName ?: ""
                                 if (userPreferences.userProfile.value.isProfileComplete) {
+                                    val existingProfile = userPreferences.userProfile.value
+                                    val existingContacts = userPreferences.contacts.value
+                                    scope.launch {
+                                        UserProfileSyncService(context).syncProfileToCloud(existingProfile, existingContacts)
+                                    }
                                     userPreferences.setLoggedIn(true)
                                     onAuthCompleted()
                                 } else {
@@ -114,6 +120,11 @@ fun AuthScreen(
                     emailInput = account.email ?: ""
                     fullNameInput = account.displayName ?: ""
                     if (userPreferences.userProfile.value.isProfileComplete) {
+                        val existingProfile = userPreferences.userProfile.value
+                        val existingContacts = userPreferences.contacts.value
+                        scope.launch {
+                            UserProfileSyncService(context).syncProfileToCloud(existingProfile, existingContacts)
+                        }
                         userPreferences.setLoggedIn(true)
                         onAuthCompleted()
                     } else {
@@ -866,6 +877,11 @@ fun AuthScreen(
                                         isPrimary = true
                                     )
                                     userPreferences.saveContacts(listOf(contact))
+
+                                    // Asynchronously sync rider profile and emergency contacts to Supabase cloud
+                                    scope.launch {
+                                        UserProfileSyncService(context).syncProfileToCloud(profile, listOf(contact))
+                                    }
 
                                     userPreferences.setLoggedIn(true)
                                     Toast.makeText(context, "Welcome to ResQRide, ${profile.fullName}!", Toast.LENGTH_LONG).show()

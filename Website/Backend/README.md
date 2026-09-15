@@ -20,9 +20,9 @@ Configure these environment variables in your Render service dashboard:
 
 | Variable | Description | Example |
 | :--- | :--- | :--- |
-| `SUPABASE_URL` | Your Supabase project URL | `https://xyzproject.supabase.co` |
+| `SUPABASE_URL` | Your Supabase project URL | `https://fxmyholhnknltmbusvds.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | Supabase `service_role` secret key | `eyJhbGciOi...` |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase Admin service account JSON string (or Base64-encoded) | `{"type": "service_account", ...}` |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase Admin service account JSON string | `{"type": "service_account", ...}` |
 | `ALLOWED_ORIGINS` | (Optional) Comma-separated list of allowed CORS origins | `https://resqride-oqhy.onrender.com,http://localhost:3000` |
 
 > **Security Note**: Never commit actual credentials or `.env` files to git. Render environment variables are encrypted and provided at runtime.
@@ -159,10 +159,72 @@ Deletes the file from Supabase storage and removes Firestore metadata.
 
 ---
 
+### Rider Profile & Emergency Triage Endpoints
+
+#### `POST /api/profile`
+Synchronizes user profile, medical history, emergency contacts, and prescription metadata to Supabase (`profiles/{uid}.json`).
+- **Body**:
+  ```json
+  {
+    "uid": "user_12345",
+    "fullName": "Rahul Sharma",
+    "email": "rahul@example.com",
+    "phone": "+91 9876543210",
+    "age": 26,
+    "gender": "Male",
+    "bloodGroup": "O+",
+    "allergies": ["Penicillin"],
+    "chronicConditions": ["Asthma"],
+    "emergencyNotes": "Carry inhaler",
+    "emergencyContacts": [
+      {
+        "name": "Anil Sharma",
+        "phone": "+91 9876500000",
+        "relationship": "Father",
+        "isPrimary": true
+      }
+    ],
+    "prescriptionFileName": "prescription.pdf",
+    "prescriptionFileId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "publicEmergencyUrl": "https://resqride-oqhy.onrender.com/med/user_12345"
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "User profile synchronized to Supabase successfully",
+    "user_id": "user_12345",
+    "public_url": "https://resqride-oqhy.onrender.com/med/user_12345"
+  }
+  ```
+
+#### `GET /api/profile/{user_id}`
+Retrieves the saved user profile from Supabase.
+- **Response**: `{"success": true, "profile": { ... }}`
+
+#### `GET /med/{user_id}`
+**Dynamic First Responder Emergency Medical Triage Web Card**.
+- Scanned directly from the physical QR code on the victim's helmet.
+- Renders an ultra-fast, mobile-optimized HTML triage page featuring:
+  - 🚨 Emergency Triage Banner
+  - Prominent Blood Group Badge (e.g., O+, B-)
+  - Highlighted Allergies & Chronic Conditions tags
+  - Emergency Instructions / Physician notes
+  - One-tap Emergency Contact buttons (`tel:+91...`)
+  - Direct signed links to view/download verified prescription PDFs from Supabase Storage
+- URL: `https://resqride-oqhy.onrender.com/med/{user_id}`
+
+#### `GET /api/med/{user_id}`
+JSON representation of the emergency medical card with signed PDF access URLs.
+
+---
+
 ## 6. Supabase Storage Configuration
 
 1. Log in to [Supabase Console](https://supabase.com/dashboard).
 2. Open **Storage** -> **New Bucket**.
-3. Bucket Name: `pdfs`
-4. Set **Public Bucket**: **DISABLED (Private)**.
-5. Do not enable public access policies. All access is performed through the backend with the `service_role` key, ensuring that only verified Firebase users can obtain short-lived signed URLs for their own files.
+3. Bucket 1: `pdfs` (Private bucket for prescription and medical documents).
+4. Bucket 2: `profiles` (Public bucket for JSON profile persistence and rapid triage retrieval).
+5. All operations are mediated via the backend using the `service_role` key, ensuring verified uploads and signed emergency document downloads.
+

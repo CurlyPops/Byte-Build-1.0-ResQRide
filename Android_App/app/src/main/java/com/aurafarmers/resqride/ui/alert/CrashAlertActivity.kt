@@ -62,21 +62,9 @@ class CrashAlertActivity : ComponentActivity() {
                 }
 
                 if (isSosDispatched) {
-                    ActiveSosCallContent(
+                    ActiveSosAlertContent(
                         primaryContactName = primaryContact?.name ?: "Emergency Contact",
                         primaryContactPhone = primaryContact?.phone ?: "",
-                        onRepeatVoiceClicked = {
-                            crashAlertManager.voiceCallDispatcher.forceSpeakerphone()
-                            crashAlertManager.voiceCallDispatcher.speakEmergencyMessage(
-                                userProfile,
-                                "${crashAlertManager.currentCrashLat}, ${crashAlertManager.currentCrashLon}"
-                            )
-                            Toast.makeText(this@CrashAlertActivity, "Playing emergency alert on speaker...", Toast.LENGTH_SHORT).show()
-                        },
-                        onSpeakerphoneClicked = {
-                            crashAlertManager.voiceCallDispatcher.forceSpeakerphone()
-                            Toast.makeText(this@CrashAlertActivity, "Speakerphone forced to maximum volume", Toast.LENGTH_SHORT).show()
-                        },
                         onSendSmsFallbackClicked = {
                             if (primaryContact != null) {
                                 val msg = crashAlertManager.smsDispatcher.buildEmergencyMessage(
@@ -131,15 +119,13 @@ class CrashAlertActivity : ComponentActivity() {
 }
 
 @Composable
-fun ActiveSosCallContent(
+fun ActiveSosAlertContent(
     primaryContactName: String,
     primaryContactPhone: String,
-    onRepeatVoiceClicked: () -> Unit,
-    onSpeakerphoneClicked: () -> Unit,
     onSendSmsFallbackClicked: () -> Unit,
     onDismissClicked: () -> Unit
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse_call")
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse_sms")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 0.95f,
         targetValue = 1.08f,
@@ -147,7 +133,7 @@ fun ActiveSosCallContent(
             animation = tween(800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "call_pulse"
+        label = "sms_pulse"
     )
 
     Box(
@@ -172,7 +158,7 @@ fun ActiveSosCallContent(
         ) {
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Calling Status Card
+            // SMS Dispatch Status Card
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -188,7 +174,7 @@ fun ActiveSosCallContent(
                             .background(EmeraldPrimary, shape = CircleShape)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.PhoneInTalk,
+                            imageVector = Icons.Default.Sms,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(36.dp)
@@ -199,7 +185,7 @@ fun ActiveSosCallContent(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "EMERGENCY CALL IN PROGRESS",
+                    text = "EMERGENCY SMS DISPATCHED",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = EmeraldPrimary,
@@ -224,7 +210,7 @@ fun ActiveSosCallContent(
                 }
             }
 
-            // Voice Alert Info Card
+            // SMS Alert Info Card
             Card(
                 shape = RoundedCornerShape(18.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.9f)),
@@ -236,14 +222,14 @@ fun ActiveSosCallContent(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.VolumeUp,
+                            imageVector = Icons.Default.CheckCircle,
                             contentDescription = null,
-                            tint = Color(0xFF38BDF8),
+                            tint = EmeraldPrimary,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Automated Voice Active",
+                            text = "Emergency Alerts Sent",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
                             color = Color.White
@@ -251,7 +237,7 @@ fun ActiveSosCallContent(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "The emergency announcement is looping automatically through the speakerphone every 7 seconds so your contact hears the alert as soon as they answer.",
+                        text = "Emergency SMS messages containing your live GPS coordinates, Google Maps link, and nearby hospital contacts have been dispatched to your emergency contacts.",
                         fontSize = 12.sp,
                         color = Color.White.copy(alpha = 0.75f),
                         textAlign = TextAlign.Center,
@@ -260,43 +246,11 @@ fun ActiveSosCallContent(
                 }
             }
 
-            // In-Call Assistance Controls
+            // Controls
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Button: Repeat Voice Alert Now
-                Button(
-                    onClick = onRepeatVoiceClicked,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
-                ) {
-                    Icon(imageVector = Icons.Default.RecordVoiceOver, contentDescription = null)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Repeat Voice Alert Now",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
-                }
-
-                // Button: Ensure Speakerphone
-                OutlinedButton(
-                    onClick = onSpeakerphoneClicked,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8))
-                ) {
-                    Icon(imageVector = Icons.Default.VolumeUp, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Ensure Speakerphone at Max Volume", fontWeight = FontWeight.SemiBold)
-                }
-
                 // Button: Send SMS Fallback
                 OutlinedButton(
                     onClick = onSendSmsFallbackClicked,
@@ -308,10 +262,10 @@ fun ActiveSosCallContent(
                 ) {
                     Icon(imageVector = Icons.Default.Send, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Send Emergency SMS via Messages App", fontWeight = FontWeight.SemiBold)
+                    Text("Open Messages App", fontWeight = FontWeight.SemiBold)
                 }
 
-                // Button: End / Dismiss
+                // Button: Dismiss Alert
                 TextButton(
                     onClick = onDismissClicked,
                     modifier = Modifier
@@ -319,7 +273,7 @@ fun ActiveSosCallContent(
                         .height(44.dp)
                 ) {
                     Text(
-                        text = "Dismiss / Stop Alert Loop",
+                        text = "Dismiss Alert",
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 13.sp
                     )
