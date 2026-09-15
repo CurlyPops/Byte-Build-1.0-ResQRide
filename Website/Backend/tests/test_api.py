@@ -351,3 +351,98 @@ def test_nearby_hospitals(client):
     assert "name" in data["hospitals"][0]
     assert "distance_km" in data["hospitals"][0]
 
+
+def test_get_profile_fallback_to_mock_user(client):
+    # Tests that /api/profile/{uid} returns demo profile if not in cloud storage
+    mock_supabase = MagicMock()
+    mock_supabase.storage.from_().download.side_effect = Exception("Not found")
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        response = client.get("/api/profile/demo-user-001")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["profile"]["fullName"] == "Arjun Mehta"
+        assert data["profile"]["bloodGroup"] == "B+"
+
+
+def test_med_html_for_demo_user(client):
+    # Tests that /med/demo-user-001 generates full paramedic triage card
+    mock_supabase = MagicMock()
+    mock_supabase.storage.from_().download.side_effect = Exception("Not in storage")
+    mock_supabase.storage.from_().list.return_value = []
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        response = client.get("/med/demo-user-001")
+        assert response.status_code == 200
+        assert "text/html" in response.headers.get("content-type", "")
+        content = response.text
+        assert "Arjun Mehta" in content
+        assert "B+" in content
+        assert "Penicillin" in content
+        assert "tel:+919876543210" in content
+        assert "Hospital Navigator" in content
+        assert "https://resqride-oqhy.onrender.com" in content
+
+
+def test_api_med_json_for_demo_user(client):
+    # Tests that /api/med/demo-user-001 returns structured JSON triage data
+    mock_supabase = MagicMock()
+    mock_supabase.storage.from_().download.side_effect = Exception("Not in storage")
+    mock_supabase.storage.from_().list.return_value = []
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        response = client.get("/api/med/demo-user-001")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["user_id"] == "demo-user-001"
+        assert data["data"]["profile"]["bloodGroup"] == "B+"
+        assert len(data["data"]["prescription_documents"]) > 0
+
+
+def test_save_user_profile_syncs_with_emergency_endpoints(client):
+    # Tests that posting to /api/profile makes rider immediately visible to web emergency endpoints
+    mock_supabase = MagicMock()
+    mock_supabase.storage.from_().upload.return_value = {"Key": "profiles/rider-sync-test.json"}
+
+    payload = {
+        "uid": "rider-sync-test",
+        "fullName": "Deepak Kumar",
+        "phone": "+91 9123456780",
+        "age": 30,
+        "bloodGroup": "O+",
+        "allergies": ["Ibuprofen"],
+        "medications": ["Antacid"],
+        "emergencyContacts": [
+            {
+                "name": "Kavita Kumar",
+                "phone": "+91 9123456789",
+                "relationship": "Spouse",
+                "isPrimary": True,
+            }
+        ],
+    }
+
+    with patch("main.get_supabase_client", return_value=mock_supabase):
+        # 1. Save profile via /api/profile
+        res = client.post("/api/profile", json=payload)
+        assert res.status_code == 200
+        assert res.json()["success"] is True
+
+        # 2. Check that /api/emergency/rider-sync-test immediately returns it
+        emer_res = client.get("/api/emergency/rider-sync-test")
+        assert emer_res.status_code == 200
+        e_data = emer_res.json()
+        assert e_data["profile"]["name"] == "Deepak Kumar"
+        assert e_data["profile"]["blood_group"] == "O+"
+
+        # 3. Check that /med/rider-sync-test immediately returns the triage card
+        med_html = client.get("/med/rider-sync-test")
+        assert med_html.status_code == 200
+        assert "Deepak Kumar" in med_html.text
+        assert "O+" in med_html.text
+        assert "Ibuprofen" in med_html.text
+        assert "tel:+919123456789" in med_html.text
+
+

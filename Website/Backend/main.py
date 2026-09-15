@@ -21,6 +21,18 @@ from supabase import Client, create_client
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("resqride-backend")
 
+# Auto-load .env variables if present
+_env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_env_path):
+    with open(_env_path, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                _k, _v = _k.strip(), _v.strip()
+                if _k not in os.environ:
+                    os.environ[_k] = _v
+
 app = FastAPI(
     title="ResQRide Backend API",
     description="Secure PDF upload, storage, and medical emergency verification backend",
@@ -518,6 +530,9 @@ class UserProfilePayload(BaseModel):
     isProfileComplete: Optional[bool] = True
 
 
+REGISTERED_PROFILES: dict = {}
+
+
 # ---------------------------------------------------------------------------
 # Profile Management & Supabase Persistence
 # ---------------------------------------------------------------------------
@@ -536,6 +551,7 @@ def save_user_profile(
     Saves user profile and emergency contacts into Supabase Storage & Database.
     Stores full JSON inside Supabase Storage (profiles/{uid}.json) and attempts
     upsert into 'user_profiles' or 'profiles' table if configured.
+    Also synchronizes in-memory registered profiles store for immediate zero-latency access.
     """
     client = get_supabase_client()
     _ensure_profiles_bucket(client)
@@ -551,6 +567,28 @@ def save_user_profile(
     profile_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
     if not profile_dict.get("publicEmergencyUrl"):
         profile_dict["publicEmergencyUrl"] = f"https://resqride-oqhy.onrender.com/med/{uid}"
+
+    # Sync to in-memory store with normalized fields for immediate web & API access
+    REGISTERED_PROFILES[uid] = {
+        "id": uid,
+        "name": payload.fullName,
+        "age": payload.age or 0,
+        "blood_group": payload.bloodGroup or "Unknown",
+        "verified": True,
+        "allergies": [{"name": a, "severity": "moderate"} if isinstance(a, str) else a for a in (payload.allergies or [])],
+        "prescriptions": [{"name": m, "dosage": "", "frequency": ""} if isinstance(m, str) else m for m in (payload.medications or [])],
+        "emergency_contacts": [
+            {
+                "name": c.name,
+                "relation": c.relationship,
+                "phone": c.phone,
+                "is_primary": c.isPrimary,
+            }
+            for c in (payload.emergencyContacts or [])
+        ],
+        "medical_notes": payload.emergencyNotes or "",
+        "updated_at": profile_dict["updated_at"],
+    }
 
     # 1. Save JSON directly into Supabase Storage bucket 'profiles'
     try:
@@ -569,7 +607,7 @@ def save_user_profile(
         )
 
     # 2. Dual upsert to PostgREST table if available
-    for tbl in ["user_profiles", "profiles"]:
+    for tbl in ["user_profiles", "profiles", "users"]:
         try:
             client.table(tbl).upsert({
                 "id": uid,
@@ -601,20 +639,86 @@ def save_user_profile(
 @app.get("/api/profile/{user_id}")
 def get_user_profile(user_id: str):
     """
-    Retrieves stored profile JSON from Supabase.
+    Retrieves stored profile JSON from Supabase storage (profiles/{uid}.json).
+    Falls back to registered in-memory store and mock profiles if not found in cloud storage.
     """
     clean_uid = os.path.basename(user_id).strip()
     if not clean_uid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user ID.")
 
-    client = get_supabase_client()
+    client = None
     try:
-        data_bytes = client.storage.from_(PROFILES_BUCKET).download(f"{clean_uid}.json")
-        profile_data = json.loads(data_bytes.decode("utf-8"))
+        client = get_supabase_client()
+    except Exception:
+        pass
+
+    if client:
+        try:
+            data_bytes = client.storage.from_(PROFILES_BUCKET).download(f"{clean_uid}.json")
+            profile_data = json.loads(data_bytes.decode("utf-8"))
+            return {"success": True, "profile": profile_data}
+        except Exception as e:
+            logger.warning(f"Profile not found in Supabase storage for {clean_uid}: {e}")
+
+    # Fallback to in-memory registered profile
+    if clean_uid in REGISTERED_PROFILES:
+        raw = REGISTERED_PROFILES[clean_uid]
+        profile_data = {
+            "uid": clean_uid,
+            "fullName": raw.get("name", "Unknown"),
+            "email": raw.get("email", ""),
+            "phone": raw.get("phone", ""),
+            "age": raw.get("age", 0),
+            "gender": raw.get("gender", ""),
+            "bloodGroup": raw.get("blood_group", "Unknown"),
+            "allergies": [a if isinstance(a, str) else a.get("name", str(a)) for a in raw.get("allergies", [])],
+            "chronicConditions": [],
+            "medications": [p if isinstance(p, str) else p.get("name", str(p)) for p in raw.get("prescriptions", [])],
+            "emergencyNotes": raw.get("medical_notes", ""),
+            "emergencyContacts": [
+                {
+                    "name": c.get("name", ""),
+                    "phone": c.get("phone", ""),
+                    "relationship": c.get("relation") or c.get("relationship", "Contact"),
+                    "isPrimary": c.get("is_primary") or c.get("isPrimary", False),
+                }
+                for c in raw.get("emergency_contacts", [])
+            ],
+            "publicEmergencyUrl": f"https://resqride-oqhy.onrender.com/med/{clean_uid}",
+            "isProfileComplete": True,
+        }
         return {"success": True, "profile": profile_data}
-    except Exception as e:
-        logger.warning(f"Profile not found in Supabase storage for {clean_uid}: {e}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
+
+    # Fallback to mock profile if demo user
+    if clean_uid in MOCK_USER_PROFILES:
+        raw = MOCK_USER_PROFILES[clean_uid]
+        profile_data = {
+            "uid": clean_uid,
+            "fullName": raw.get("name", "Unknown"),
+            "email": "demo@resqride.org",
+            "phone": "+91 9876543210",
+            "age": raw.get("age", 28),
+            "gender": "Male",
+            "bloodGroup": raw.get("blood_group", "Unknown"),
+            "allergies": [a if isinstance(a, str) else a.get("name", str(a)) for a in raw.get("allergies", [])],
+            "chronicConditions": ["Type 2 Diabetes"],
+            "medications": [p if isinstance(p, str) else p.get("name", str(p)) for p in raw.get("prescriptions", [])],
+            "emergencyNotes": raw.get("medical_notes", ""),
+            "emergencyContacts": [
+                {
+                    "name": c.get("name", ""),
+                    "phone": c.get("phone", ""),
+                    "relationship": c.get("relation") or c.get("relationship", "Contact"),
+                    "isPrimary": True if i == 0 else False,
+                }
+                for i, c in enumerate(raw.get("emergency_contacts", []))
+            ],
+            "publicEmergencyUrl": f"https://resqride-oqhy.onrender.com/med/{clean_uid}",
+            "isProfileComplete": True,
+        }
+        return {"success": True, "profile": profile_data}
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
 
 
 # ---------------------------------------------------------------------------
@@ -624,42 +728,113 @@ def _get_user_medical_data_with_pdfs(user_id: str) -> dict:
     """
     Fetches user profile and queries Supabase Storage for all uploaded prescription PDFs,
     generating signed download URLs.
+    Checks Supabase Storage 'profiles/{clean_uid}.json', then in-memory store and mock profiles.
     """
-    client = get_supabase_client()
+    client = None
+    try:
+        client = get_supabase_client()
+    except Exception:
+        pass
+
     clean_uid = os.path.basename(user_id).strip()
 
     profile_data = {}
-    try:
-        data_bytes = client.storage.from_(PROFILES_BUCKET).download(f"{clean_uid}.json")
-        profile_data = json.loads(data_bytes.decode("utf-8"))
-    except Exception as e:
-        logger.warning(f"Could not load profile from Supabase for {clean_uid}: {e}")
+    if client:
+        try:
+            data_bytes = client.storage.from_(PROFILES_BUCKET).download(f"{clean_uid}.json")
+            profile_data = json.loads(data_bytes.decode("utf-8"))
+        except Exception as e:
+            logger.warning(f"Could not load profile from Supabase storage for {clean_uid}: {e}")
+
+    # Fallback to in-memory registered or mock profiles if not in Supabase storage
+    if not profile_data:
+        if clean_uid in REGISTERED_PROFILES:
+            raw = REGISTERED_PROFILES[clean_uid]
+            profile_data = {
+                "uid": clean_uid,
+                "fullName": raw.get("name") or raw.get("fullName", "Rider"),
+                "age": raw.get("age"),
+                "bloodGroup": raw.get("blood_group") or raw.get("bloodGroup", "Unknown"),
+                "allergies": [a if isinstance(a, str) else a.get("name", str(a)) for a in raw.get("allergies", [])],
+                "emergencyContacts": [
+                    {
+                        "name": c.get("name", "Contact"),
+                        "phone": c.get("phone", ""),
+                        "relationship": c.get("relation") or c.get("relationship", "Contact"),
+                        "isPrimary": c.get("is_primary") or c.get("isPrimary", False),
+                    }
+                    for c in raw.get("emergency_contacts", [])
+                ],
+                "emergencyNotes": raw.get("medical_notes") or raw.get("emergencyNotes", ""),
+                "publicEmergencyUrl": f"https://resqride-oqhy.onrender.com/med/{clean_uid}",
+            }
+        elif clean_uid in MOCK_USER_PROFILES:
+            raw = MOCK_USER_PROFILES[clean_uid]
+            profile_data = {
+                "uid": clean_uid,
+                "fullName": raw.get("name", "Rider"),
+                "age": raw.get("age"),
+                "bloodGroup": raw.get("blood_group", "Unknown"),
+                "allergies": [a if isinstance(a, str) else a.get("name", str(a)) for a in raw.get("allergies", [])],
+                "emergencyContacts": [
+                    {
+                        "name": c.get("name", "Contact"),
+                        "phone": c.get("phone", ""),
+                        "relationship": c.get("relation") or c.get("relationship", "Contact"),
+                        "isPrimary": c.get("is_primary") or c.get("isPrimary", False),
+                    }
+                    for c in raw.get("emergency_contacts", [])
+                ],
+                "emergencyNotes": raw.get("medical_notes", ""),
+                "publicEmergencyUrl": f"https://resqride-oqhy.onrender.com/med/{clean_uid}",
+            }
+
+    # Normalize fields in profile_data if any alternate naming was used
+    if profile_data:
+        if "fullName" not in profile_data and "name" in profile_data:
+            profile_data["fullName"] = profile_data["name"]
+        if "bloodGroup" not in profile_data and "blood_group" in profile_data:
+            profile_data["bloodGroup"] = profile_data["blood_group"]
+        if "emergencyNotes" not in profile_data and "medical_notes" in profile_data:
+            profile_data["emergencyNotes"] = profile_data["medical_notes"]
+        if "emergencyContacts" not in profile_data and "emergency_contacts" in profile_data:
+            profile_data["emergencyContacts"] = profile_data["emergency_contacts"]
 
     # Query uploaded PDFs in Supabase storage 'pdfs/{clean_uid}/'
     pdf_docs = []
-    try:
-        storage_files = client.storage.from_(BUCKET).list(clean_uid)
-        for item in storage_files:
-            file_name = item.get("name", "")
-            if file_name.lower().endswith(".pdf"):
-                path = f"{clean_uid}/{file_name}"
-                try:
-                    signed_res = client.storage.from_(BUCKET).create_signed_url(path, 3600)
-                    surl = None
-                    if isinstance(signed_res, dict):
-                        surl = signed_res.get("signedURL") or signed_res.get("signedUrl")
-                    elif hasattr(signed_res, "signed_url"):
-                        surl = getattr(signed_res, "signed_url")
+    if client:
+        try:
+            storage_files = client.storage.from_(BUCKET).list(clean_uid)
+            for item in storage_files:
+                file_name = item.get("name", "")
+                if file_name.lower().endswith(".pdf"):
+                    path = f"{clean_uid}/{file_name}"
+                    try:
+                        signed_res = client.storage.from_(BUCKET).create_signed_url(path, 3600)
+                        surl = None
+                        if isinstance(signed_res, dict):
+                            surl = signed_res.get("signedURL") or signed_res.get("signedUrl")
+                        elif hasattr(signed_res, "signed_url"):
+                            surl = getattr(signed_res, "signed_url")
 
-                    pdf_docs.append({
-                        "filename": file_name,
-                        "storage_path": path,
-                        "signed_url": surl,
-                    })
-                except Exception as sign_err:
-                    logger.warning(f"Error signing URL for {path}: {sign_err}")
-    except Exception as list_err:
-        logger.warning(f"Error listing PDFs for {clean_uid}: {list_err}")
+                        pdf_docs.append({
+                            "filename": file_name,
+                            "storage_path": path,
+                            "signed_url": surl,
+                        })
+                    except Exception as sign_err:
+                        logger.warning(f"Error signing URL for {path}: {sign_err}")
+        except Exception as list_err:
+            logger.warning(f"Error listing PDFs for {clean_uid}: {list_err}")
+
+    # Fallback to mock prescriptions if demo user and no storage PDFs found
+    if not pdf_docs and (clean_uid in MOCK_USER_PROFILES or "demo" in clean_uid):
+        for rx in MOCK_USER_PRESCRIPTIONS.get(clean_uid, []):
+            pdf_docs.append({
+                "filename": rx.get("filename", "Prescription.pdf"),
+                "storage_path": f"{clean_uid}/{rx.get('file_id', 'doc')}.pdf",
+                "signed_url": f"https://resqride-oqhy.onrender.com/api/emergency/{clean_uid}/prescriptions",
+            })
 
     return {
         "user_id": clean_uid,
@@ -732,25 +907,25 @@ def get_emergency_medical_triage_card(user_id: str):
     allergies = profile.get("allergies") or []
     conditions = profile.get("chronicConditions") or []
     med_notes = profile.get("emergencyNotes") or "No special medical instructions provided."
-    contacts = profile.get("emergencyContacts") or []
+    contacts = profile.get("emergencyContacts") or profile.get("emergency_contacts") or []
 
     if allergies:
-        allergies_html = "".join([f'<span class="tag tag-red">{a}</span>' for a in allergies])
+        allergies_html = "".join([f'<span class="tag tag-red">{a if isinstance(a, str) else a.get("name", str(a))}</span>' for a in allergies])
     else:
         allergies_html = '<span class="tag tag-gray">No Known Drug Allergies (NKDA)</span>'
 
     if conditions:
-        conditions_html = "".join([f'<span class="tag tag-amber">{c}</span>' for c in conditions])
+        conditions_html = "".join([f'<span class="tag tag-amber">{c if isinstance(c, str) else c.get("name", str(c))}</span>' for c in conditions])
     else:
         conditions_html = '<span class="tag tag-gray">None Reported</span>'
 
     contacts_html = ""
     for idx, c in enumerate(contacts):
         c_name = c.get("name", "Emergency Contact")
-        c_rel = c.get("relationship", "Contact")
+        c_rel = c.get("relationship") or c.get("relation", "Contact")
         c_phone = c.get("phone", "")
         clean_p = c_phone.replace(" ", "").replace("-", "")
-        is_prim = c.get("isPrimary", False) or idx == 0
+        is_prim = c.get("isPrimary") or c.get("is_primary", False) or idx == 0
         prim_badge = '<span class="prim-badge">PRIMARY</span>' if is_prim else ""
         contacts_html += f"""
         <div class="contact-item">
@@ -1049,6 +1224,12 @@ def get_emergency_medical_triage_card(user_id: str):
             {pdfs_html}
         </div>
 
+        <div style="text-align: center; margin: 18px 0 10px 0;">
+            <a href="/index.html?rider={clean_uid}" style="display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 12px; font-weight: 700; font-size: 14px; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);">
+                🗺️ Open Hospital Navigator & Live Route
+            </a>
+        </div>
+
         <div class="footer">
             ResQRide Universal Smart Emergency Response<br>
             Hosted on <a href="https://resqride-oqhy.onrender.com" style="color: #60a5fa; text-decoration: none;">https://resqride-oqhy.onrender.com</a>
@@ -1062,8 +1243,6 @@ def get_emergency_medical_triage_card(user_id: str):
 # ---------------------------------------------------------------------------
 # Mock & Registered Data (used for demo, offline test, or when Supabase is not yet populated)
 # ---------------------------------------------------------------------------
-REGISTERED_PROFILES: dict = {}
-
 MOCK_USER_PROFILES = {
     "demo-user-001": {
         "id": "demo-user-001",
@@ -1301,11 +1480,12 @@ def list_demo_profiles():
 
 
 @app.post("/api/emergency/profile")
-def save_user_profile(payload: dict):
+def save_emergency_profile(payload: dict):
     """
     PUBLIC sign-up/profile endpoint — saves personalized sign-up info
-    (name, blood group, allergies, prescriptions, contacts) to Supabase/Firestore
-    and in-memory store so it is immediately accessible via the QR code URL.
+    (name, blood group, allergies, prescriptions, contacts) to Supabase Storage,
+    Supabase table, Firestore, and in-memory store so it is immediately accessible
+    via the QR code URL.
     """
     user_id = payload.get("id") or f"rider-{uuid.uuid4().hex[:8]}"
     profile = {
@@ -1323,18 +1503,51 @@ def save_user_profile(payload: dict):
 
     REGISTERED_PROFILES[user_id] = profile
 
-    # Persist to Supabase if configured
+    # 1. Persist to Supabase Storage bucket 'profiles/{user_id}.json'
+    try:
+        client = get_supabase_client()
+        _ensure_profiles_bucket(client)
+        storage_dict = {
+            "uid": user_id,
+            "fullName": profile["name"],
+            "age": profile["age"],
+            "bloodGroup": profile["blood_group"],
+            "allergies": [a if isinstance(a, str) else a.get("name", str(a)) for a in profile["allergies"]],
+            "emergencyContacts": [
+                {
+                    "name": c.get("name", ""),
+                    "phone": c.get("phone", ""),
+                    "relationship": c.get("relation") or c.get("relationship", "Contact"),
+                    "isPrimary": c.get("is_primary") or c.get("isPrimary", False),
+                }
+                for c in profile["emergency_contacts"]
+            ],
+            "emergencyNotes": profile["medical_notes"],
+            "publicEmergencyUrl": f"https://resqride-oqhy.onrender.com/med/{user_id}",
+            "updated_at": profile["updated_at"],
+        }
+        json_bytes = json.dumps(storage_dict, indent=2).encode("utf-8")
+        client.storage.from_(PROFILES_BUCKET).upload(
+            f"{user_id}.json",
+            json_bytes,
+            {"content-type": "application/json", "upsert": "true"},
+        )
+        logger.info(f"Emergency profile uploaded to Supabase Storage profiles/{user_id}.json")
+    except Exception as e:
+        logger.warning(f"Could not persist profile to Supabase Storage: {e}")
+
+    # 2. Persist to Supabase table if configured
     try:
         url = os.environ.get("SUPABASE_URL", SUPABASE_URL).strip()
         key = os.environ.get("SUPABASE_SERVICE_KEY", SUPABASE_SERVICE_KEY).strip()
         if url and key:
             client = create_client(url, key)
             client.table("users").upsert(profile).execute()
-            logger.info(f"User profile saved to Supabase: {user_id}")
+            logger.info(f"User profile saved to Supabase table: {user_id}")
     except Exception as e:
-        logger.warning(f"Could not persist profile to Supabase: {e}")
+        logger.warning(f"Could not persist profile to Supabase table: {e}")
 
-    # Persist to Firestore if configured
+    # 3. Persist to Firestore if configured
     try:
         if is_firebase_initialized():
             db = firestore.client()
@@ -1356,7 +1569,8 @@ def get_emergency_profile(user_id: str):
     """
     PUBLIC endpoint — returns the medical profile for a user.
     This is the QR-code scan target. No authentication required.
-    Checks in-memory registered store, Supabase 'users' table, and demo profiles.
+    Checks in-memory registered store, Supabase Storage profiles/{user_id}.json,
+    Supabase 'users' table, and demo profiles.
     """
     # 1. Check in-memory registered profiles first (e.g. from sign up during session)
     if user_id in REGISTERED_PROFILES:
@@ -1366,7 +1580,48 @@ def get_emergency_profile(user_id: str):
             "profile": REGISTERED_PROFILES[user_id],
         }
 
-    # 2. Try fetching from Supabase
+    # 2. Try fetching from Supabase Storage profiles/{user_id}.json
+    try:
+        client = get_supabase_client()
+        clean_uid = os.path.basename(user_id).strip()
+        data_bytes = client.storage.from_(PROFILES_BUCKET).download(f"{clean_uid}.json")
+        stored = json.loads(data_bytes.decode("utf-8"))
+        profile = {
+            "id": stored.get("uid", user_id),
+            "name": stored.get("fullName") or stored.get("name", "Unknown Rider"),
+            "age": stored.get("age", 25),
+            "blood_group": stored.get("bloodGroup") or stored.get("blood_group", "Unknown"),
+            "verified": True,
+            "allergies": [
+                {"name": a, "severity": "moderate"} if isinstance(a, str) else a
+                for a in stored.get("allergies", [])
+            ],
+            "prescriptions": [
+                {"name": m, "dosage": "", "frequency": ""} if isinstance(m, str) else m
+                for m in (stored.get("medications") or stored.get("prescriptions") or [])
+            ],
+            "emergency_contacts": [
+                {
+                    "name": c.get("name", "Contact"),
+                    "relation": c.get("relationship") or c.get("relation", "Contact"),
+                    "phone": c.get("phone", ""),
+                    "is_primary": c.get("isPrimary") or c.get("is_primary", False),
+                }
+                for c in (stored.get("emergencyContacts") or stored.get("emergency_contacts") or [])
+            ],
+            "medical_notes": stored.get("emergencyNotes") or stored.get("medical_notes", ""),
+            "updated_at": stored.get("updated_at", datetime.now(timezone.utc).isoformat()),
+        }
+        REGISTERED_PROFILES[user_id] = profile
+        return {
+            "success": True,
+            "source": "supabase_storage",
+            "profile": profile,
+        }
+    except Exception as storage_err:
+        logger.debug(f"Profile not found in Supabase storage for {user_id}: {storage_err}")
+
+    # 3. Try fetching from Supabase table 'users'
     try:
         url = os.environ.get("SUPABASE_URL", SUPABASE_URL).strip()
         key = os.environ.get("SUPABASE_SERVICE_KEY", SUPABASE_SERVICE_KEY).strip()
@@ -1393,12 +1648,10 @@ def get_emergency_profile(user_id: str):
                         "updated_at": user_data.get("updated_at", datetime.now(timezone.utc).isoformat()),
                     },
                 }
-            else:
-                logger.info(f"No profile found in Supabase for user_id: {user_id}")
     except Exception as e:
         logger.warning(f"Error fetching from Supabase for user {user_id}: {e}")
 
-    # 3. Check predefined mock profiles
+    # 4. Check predefined mock profiles
     if user_id in MOCK_USER_PROFILES:
         return {
             "success": True,
@@ -1406,7 +1659,7 @@ def get_emergency_profile(user_id: str):
             "profile": MOCK_USER_PROFILES[user_id],
         }
 
-    # 4. Fallback: generate personalized mock profile with requested ID
+    # 5. Fallback: generate personalized mock profile with requested ID
     mock = {**MOCK_USER_PROFILE, "id": user_id}
     return {
         "success": True,
