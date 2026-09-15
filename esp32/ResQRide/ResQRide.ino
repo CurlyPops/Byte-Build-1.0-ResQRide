@@ -866,27 +866,26 @@ void bleInit() {
 
 void bleSendTelemetry() {
 
-  if (
-    !deviceConnected
-  ) {
-
+  if (!deviceConnected || !pTelemetryChar) {
     return;
   }
 
-  float payload[6] = {
-
+  char buffer[64];
+  snprintf(
+    buffer,
+    sizeof(buffer),
+    "%.3f,%.3f,%.3f,%.1f,%.1f,%.1f",
     accelX_g,
     accelY_g,
     accelZ_g,
-
     gyroX_dps,
     gyroY_dps,
     gyroZ_dps
-  };
+  );
 
   pTelemetryChar->setValue(
-    (uint8_t*)payload,
-    sizeof(payload)
+    (uint8_t*)buffer,
+    strlen(buffer)
   );
 
   pTelemetryChar->notify();
@@ -1567,13 +1566,15 @@ void loop() {
     return;
   }
 
-  // Crash detection
-
+  // Crash detection (100 Hz = every 10ms for instant reaction)
   checkForCrash();
 
-  // BLE telemetry
-
-  bleSendTelemetry();
+  // BLE telemetry (throttled to 20 Hz / 50ms to prevent BLE buffer overflow)
+  static unsigned long lastBleSend = 0;
+  if (millis() - lastBleSend >= 50) {
+    lastBleSend = millis();
+    bleSendTelemetry();
+  }
 
   // Cancel button
 

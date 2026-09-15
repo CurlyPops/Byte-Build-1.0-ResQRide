@@ -1,9 +1,15 @@
 package com.aurafarmers.resqride.ui
 
 import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,9 +65,40 @@ class MainActivity : ComponentActivity() {
         onPermissionResultCallback?.invoke()
     }
 
+    private val enableBtLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            bleManager.startScan()
+        }
+    }
+
+    private fun connectHelmet() {
+        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter = bluetoothManager?.adapter
+        if (adapter == null) {
+            Toast.makeText(this, "Bluetooth is not supported on this device", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!adapter.isEnabled) {
+            enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val hasScan = ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+            val hasConnect = ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+            if (!hasScan || !hasConnect) {
+                requestRequiredAppPermissions()
+                return
+            }
+        }
+        bleManager.startScan()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        bleManager = BleManager(this)
+        bleManager = BleManager.getInstance(this)
 
         requestRequiredAppPermissions()
 
@@ -79,6 +116,21 @@ class MainActivity : ComponentActivity() {
             var currentScreen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
             val scope = rememberCoroutineScope()
             val profileSyncService = remember { UserProfileSyncService(this@MainActivity) }
+
+            // Observe crash alerts from helmet even when ride tracking service isn't active
+            LaunchedEffect(Unit) {
+                bleManager.crashAlertEvent.collect { isCrashDetected ->
+                    if (isCrashDetected) {
+                        val lat = rideMetrics.currentLatitude
+                        val lon = rideMetrics.currentLongitude
+                        com.aurafarmers.resqride.sos.CrashAlertManager.getInstance(this@MainActivity)
+                            .startCrashAlert(lat, lon)
+                    } else {
+                        com.aurafarmers.resqride.sos.CrashAlertManager.getInstance(this@MainActivity)
+                            .cancelAlert()
+                    }
+                }
+            }
 
             // Dynamic permission tracking
             var isSmsGranted by remember { mutableStateOf(PermissionHelper.isSmsPermissionGranted(this)) }
@@ -260,7 +312,7 @@ class MainActivity : ComponentActivity() {
                                         helmetStatus = helmetStatus,
                                         connectionStatus = connectionStatus,
                                         rideMetrics = rideMetrics,
-                                        onConnectHelmetClicked = { bleManager.startScan() }
+                                        onConnectHelmetClicked = { connectHelmet() }
                                     )
                                     Screen.Family -> FamilyScreen(userProfile = userProfile)
                                     Screen.Medical -> MedicalScreen(

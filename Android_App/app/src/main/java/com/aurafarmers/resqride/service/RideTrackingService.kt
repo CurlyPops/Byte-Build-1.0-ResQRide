@@ -37,7 +37,7 @@ class RideTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        bleManager = BleManager(this)
+        bleManager = BleManager.getInstance(this)
         crashAlertManager = CrashAlertManager.getInstance(this)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
