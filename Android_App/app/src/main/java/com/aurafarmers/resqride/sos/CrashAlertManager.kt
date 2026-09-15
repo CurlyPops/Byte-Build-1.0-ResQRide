@@ -155,7 +155,7 @@ class CrashAlertManager(private val context: Context) {
         }
 
         scope.launch(Dispatchers.IO) {
-            // Send SMS to all emergency contacts
+            // 1. Send SMS to all emergency contacts
             smsDispatcher.sendEmergencyAlerts(
                 contacts = contacts,
                 userProfile = userProfile,
@@ -163,6 +163,18 @@ class CrashAlertManager(private val context: Context) {
                 longitude = targetLon,
                 nearbyHospitals = hospitals
             )
+
+            // 2. Place automated AI Voice Call to primary contact
+            val primaryContact = contacts.firstOrNull { it.isPrimary } ?: contacts.firstOrNull()
+            if (primaryContact != null && primaryContact.phone.isNotBlank()) {
+                withContext(Dispatchers.Main) {
+                    voiceCallDispatcher.initiateEmergencyVoiceCall(
+                        primaryContact = primaryContact,
+                        userProfile = userProfile,
+                        locationDescription = "$targetLat, $targetLon"
+                    )
+                }
+            }
         }
     }
 

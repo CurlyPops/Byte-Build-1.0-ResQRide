@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -65,6 +66,17 @@ class CrashAlertActivity : ComponentActivity() {
                     ActiveSosAlertContent(
                         primaryContactName = primaryContact?.name ?: "Emergency Contact",
                         primaryContactPhone = primaryContact?.phone ?: "",
+                        onCallPrimaryContactClicked = {
+                            if (primaryContact != null && primaryContact.phone.isNotBlank()) {
+                                crashAlertManager.voiceCallDispatcher.initiateEmergencyVoiceCall(
+                                    primaryContact = primaryContact,
+                                    userProfile = userProfile,
+                                    locationDescription = "${crashAlertManager.currentCrashLat}, ${crashAlertManager.currentCrashLon}"
+                                )
+                            } else {
+                                Toast.makeText(this@CrashAlertActivity, "No emergency contact configured", Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         onSendSmsFallbackClicked = {
                             if (primaryContact != null) {
                                 val msg = crashAlertManager.smsDispatcher.buildEmergencyMessage(
@@ -122,6 +134,7 @@ class CrashAlertActivity : ComponentActivity() {
 fun ActiveSosAlertContent(
     primaryContactName: String,
     primaryContactPhone: String,
+    onCallPrimaryContactClicked: () -> Unit,
     onSendSmsFallbackClicked: () -> Unit,
     onDismissClicked: () -> Unit
 ) {
@@ -251,6 +264,20 @@ fun ActiveSosAlertContent(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // Button: Call Primary Contact
+                Button(
+                    onClick = onCallPrimaryContactClicked,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
+                ) {
+                    Icon(imageVector = Icons.Default.Call, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Call ${if (primaryContactName.isNotBlank()) primaryContactName else "Emergency Contact"}", fontWeight = FontWeight.Bold)
+                }
+
                 // Button: Send SMS Fallback
                 OutlinedButton(
                     onClick = onSendSmsFallbackClicked,
@@ -260,7 +287,7 @@ fun ActiveSosAlertContent(
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFA7F3D0))
                 ) {
-                    Icon(imageVector = Icons.Default.Send, contentDescription = null)
+                    Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Open Messages App", fontWeight = FontWeight.SemiBold)
                 }
