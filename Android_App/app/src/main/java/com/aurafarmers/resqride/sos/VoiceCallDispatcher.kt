@@ -60,31 +60,16 @@ class VoiceCallDispatcher(private val context: Context) : TextToSpeech.OnInitLis
         userProfile: UserProfile,
         locationDescription: String
     ) {
-        val cleanPhone = primaryContact.phone.replace(" ", "").replace("-", "")
-
-        val callIntent = Intent(Intent.ACTION_CALL).apply {
-            data = Uri.parse("tel:$cleanPhone")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        val cleanPhone = primaryContact.phone.filter { it.isDigit() || it == '+' }
+        if (cleanPhone.isBlank()) {
+            Log.w("VoiceCallDispatcher", "Cannot initiate call: Phone number is empty")
+            return
         }
 
-        try {
-            context.startActivity(callIntent)
-            Log.i("VoiceCallDispatcher", "Initiated emergency phone call to primary contact: $cleanPhone")
-
-            // Start continuous voice repetition loop
+        val success = EmergencyCallHelper.makeCall(context, cleanPhone)
+        if (success) {
+            Log.i("VoiceCallDispatcher", "Call successfully launched for: $cleanPhone")
             startEmergencyVoiceLoop(userProfile, locationDescription)
-        } catch (e: Exception) {
-            Log.e("VoiceCallDispatcher", "Failed to initiate direct call, attempting dial intent", e)
-            try {
-                val dialIntent = Intent(Intent.ACTION_DIAL).apply {
-                    data = Uri.parse("tel:$cleanPhone")
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                context.startActivity(dialIntent)
-                startEmergencyVoiceLoop(userProfile, locationDescription)
-            } catch (err: Exception) {
-                Log.e("VoiceCallDispatcher", "Dialer error", err)
-            }
         }
     }
 
@@ -127,8 +112,6 @@ class VoiceCallDispatcher(private val context: Context) : TextToSpeech.OnInitLis
     fun forceSpeakerphone() {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
         try {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val speakerDevice = audioManager.availableCommunicationDevices.firstOrNull {
                     it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER

@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurafarmers.resqride.data.model.EmergencyContact
 import com.aurafarmers.resqride.data.pref.UserPreferences
+import com.aurafarmers.resqride.sos.EmergencyCallHelper
 import com.aurafarmers.resqride.ui.theme.*
 import com.aurafarmers.resqride.util.PermissionHelper
 
@@ -483,6 +484,8 @@ fun ContactRow(
     onSetPrimary: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
         shape = RoundedCornerShape(12.dp),
@@ -526,7 +529,21 @@ fun ContactRow(
                 )
             }
 
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Quick Test Call
+                IconButton(
+                    onClick = {
+                        EmergencyCallHelper.makeCall(context, contact.phone)
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Phone,
+                        contentDescription = "Test Call",
+                        tint = EmeraldPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
                 if (!contact.isPrimary) {
                     TextButton(onClick = onSetPrimary) {
                         Text("Make Primary", fontSize = 11.sp, color = EmeraldPrimary)
