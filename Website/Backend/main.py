@@ -624,18 +624,44 @@ def save_user_profile(
             detail=f"Failed to store profile in cloud storage: {str(e)}",
         )
 
-    # 2. Dual upsert to PostgREST table if available
+    # 2. Dual upsert to PostgREST database table if available
+    table_payload = {
+        "id": uid,
+        "uid": uid,
+        "full_name": payload.fullName,
+        "email": payload.email or "",
+        "phone": payload.phone or "",
+        "age": payload.age or 0,
+        "gender": payload.gender or "",
+        "blood_group": payload.bloodGroup or "",
+        "allergies": payload.allergies or [],
+        "chronic_conditions": payload.chronicConditions or [],
+        "medications": payload.medications or [],
+        "emergency_notes": payload.emergencyNotes or "",
+        "emergency_contacts": [c.model_dump() for c in (payload.emergencyContacts or [])],
+        "prescription_file_name": payload.prescriptionFileName or "",
+        "prescription_file_id": payload.prescriptionFileId or "",
+        "public_emergency_url": profile_dict.get("publicEmergencyUrl", ""),
+        "data": profile_dict,
+        "updated_at": profile_dict["updated_at"],
+    }
     for tbl in ["user_profiles", "profiles", "users"]:
         try:
-            client.table(tbl).upsert({
-                "id": uid,
-                "user_id": uid,
-                "data": profile_dict,
-                "updated_at": profile_dict["updated_at"]
-            }).execute()
+            client.table(tbl).upsert(table_payload).execute()
+            logger.info(f"User profile row upserted into PostgREST table '{tbl}' for uid {uid}")
             break
-        except Exception:
-            pass
+        except Exception as tbl_err:
+            # Fallback to minimal data column if schema has fewer columns
+            try:
+                client.table(tbl).upsert({
+                    "id": uid,
+                    "user_id": uid,
+                    "data": profile_dict,
+                    "updated_at": profile_dict["updated_at"]
+                }).execute()
+                break
+            except Exception:
+                pass
 
     # 3. Firestore sync if available
     try:
@@ -651,6 +677,62 @@ def save_user_profile(
         "user_id": uid,
         "public_url": profile_dict["publicEmergencyUrl"],
         "profile": profile_dict,
+    }
+
+
+@app.get("/api/admin/sync-tables")
+def sync_storage_to_tables():
+    """
+    Backfills and synchronizes all JSON profiles from Supabase Storage bucket 'profiles'
+    into the Supabase PostgREST 'user_profiles' database table.
+    """
+    client = get_supabase_client()
+    try:
+        files = client.storage.from_(PROFILES_BUCKET).list()
+    except Exception as e:
+        return {"success": False, "error": f"Failed listing bucket: {e}"}
+
+    synced = []
+    errors = []
+
+    for f in files:
+        name = f.get("name", "")
+        if not name.endswith(".json"):
+            continue
+        uid = name[:-5]
+        try:
+            raw_bytes = client.storage.from_(PROFILES_BUCKET).download(name)
+            p = json.loads(raw_bytes.decode("utf-8"))
+            row = {
+                "id": uid,
+                "uid": uid,
+                "full_name": p.get("fullName") or p.get("name") or "",
+                "email": p.get("email") or "",
+                "phone": p.get("phone") or "",
+                "age": p.get("age") or 0,
+                "gender": p.get("gender") or "",
+                "blood_group": p.get("bloodGroup") or p.get("blood_group") or "",
+                "allergies": p.get("allergies") or [],
+                "chronic_conditions": p.get("chronicConditions") or [],
+                "medications": p.get("medications") or [],
+                "emergency_notes": p.get("emergencyNotes") or p.get("medical_notes") or "",
+                "emergency_contacts": p.get("emergencyContacts") or p.get("emergency_contacts") or [],
+                "prescription_file_name": p.get("prescriptionFileName") or "",
+                "prescription_file_id": p.get("prescriptionFileId") or "",
+                "public_emergency_url": p.get("publicEmergencyUrl") or f"https://resqride-oqhy.onrender.com/med/{uid}",
+                "data": p,
+                "updated_at": p.get("updated_at") or datetime.now(timezone.utc).isoformat(),
+            }
+            client.table("user_profiles").upsert(row).execute()
+            synced.append(uid)
+        except Exception as err:
+            errors.append({"uid": uid, "error": str(err)})
+
+    return {
+        "success": True,
+        "synced_count": len(synced),
+        "synced_uids": synced,
+        "errors": errors,
     }
 
 
