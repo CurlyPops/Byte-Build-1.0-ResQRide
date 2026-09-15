@@ -52,8 +52,12 @@ class BleManager(private val context: Context) {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device
-            val name = device.name ?: ""
-            if (name.contains(BleConstants.TARGET_DEVICE_NAME_PREFIX, ignoreCase = true)) {
+            val name = device.name ?: result.scanRecord?.deviceName ?: ""
+            val serviceUuids = result.scanRecord?.serviceUuids?.map { it.uuid } ?: emptyList()
+            val matchesName = name.contains(BleConstants.TARGET_DEVICE_NAME_PREFIX, ignoreCase = true)
+            val matchesUuid = serviceUuids.any { it == BleConstants.SERVICE_UUID || it == BleConstants.LEGACY_SERVICE_UUID }
+            if (matchesName || matchesUuid) {
+                Log.i("BleManager", "Discovered ResQRide Helmet: $name (${device.address})")
                 stopScan()
                 connectToDevice(device)
             }
@@ -73,15 +77,17 @@ class BleManager(private val context: Context) {
         _connectionStatus.value = BleConnectionStatus.SCANNING
 
         val scanner = bluetoothAdapter.bluetoothLeScanner ?: return
-        val filter = ScanFilter.Builder()
-            .setServiceUuid(ParcelUuid(BleConstants.SERVICE_UUID))
-            .build()
+        val filters = listOf(
+            ScanFilter.Builder().setServiceUuid(ParcelUuid(BleConstants.SERVICE_UUID)).build(),
+            ScanFilter.Builder().setServiceUuid(ParcelUuid(BleConstants.LEGACY_SERVICE_UUID)).build(),
+            ScanFilter.Builder().setDeviceName("ResQRide-Helmet").build()
+        )
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
         try {
-            scanner.startScan(listOf(filter), settings, scanCallback)
+            scanner.startScan(filters, settings, scanCallback)
             // Stop scan after 15 seconds if nothing found
             mainHandler.postDelayed({
                 if (_connectionStatus.value == BleConnectionStatus.SCANNING) {
@@ -137,16 +143,23 @@ class BleManager(private val context: Context) {
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                val service = gatt.getService(BleConstants.SERVICE_UUID) ?: return
+                val service = gatt.getService(BleConstants.SERVICE_UUID)
+                    ?: gatt.getService(BleConstants.LEGACY_SERVICE_UUID)
+                    ?: run {
+                        Log.w("BleManager", "ResQRide service not found on device")
+                        return
+                    }
 
                 // 1. Enable Crash Event Notification
                 val crashChar = service.getCharacteristic(BleConstants.CHAR_CRASH_EVENT_UUID)
+                    ?: service.getCharacteristic(BleConstants.LEGACY_CHAR_CRASH_EVENT_UUID)
                 if (crashChar != null) {
                     enableNotification(gatt, crashChar)
                 }
 
                 // 2. Enable IMU Data Stream Notification
                 val imuChar = service.getCharacteristic(BleConstants.CHAR_IMU_DATA_UUID)
+                    ?: service.getCharacteristic(BleConstants.LEGACY_CHAR_IMU_DATA_UUID)
                 if (imuChar != null) {
                     mainHandler.postDelayed({
                         enableNotification(gatt, imuChar)
@@ -161,7 +174,7 @@ class BleManager(private val context: Context) {
         ) {
             val value = characteristic.value ?: return
             when (characteristic.uuid) {
-                BleConstants.CHAR_CRASH_EVENT_UUID -> {
+                BleConstants.CHAR_CRASH_EVENT_UUID, BleConstants.LEGACY_CHAR_CRASH_EVENT_UUID -> {
                     val eventByte = value.getOrNull(0) ?: 0
                     if (eventByte.toInt() == 0x01) {
                         scope.launch { _crashAlertEvent.emit(true) }
@@ -170,7 +183,7 @@ class BleManager(private val context: Context) {
                         scope.launch { _crashAlertEvent.emit(false) }
                     }
                 }
-                BleConstants.CHAR_IMU_DATA_UUID -> {
+                BleConstants.CHAR_IMU_DATA_UUID, BleConstants.LEGACY_CHAR_IMU_DATA_UUID -> {
                     parseImuPayload(value)
                 }
                 BleConstants.CHAR_BATTERY_LEVEL_UUID -> {

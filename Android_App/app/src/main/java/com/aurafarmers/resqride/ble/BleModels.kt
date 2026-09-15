@@ -3,19 +3,25 @@ package com.aurafarmers.resqride.ble
 import java.util.UUID
 
 object BleConstants {
-    // ResQRide Main Helmet Service
-    val SERVICE_UUID: UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
+    // Primary ResQRide Helmet Service (matches ESP32 firmware 0x0000FF00)
+    val SERVICE_UUID: UUID = UUID.fromString("0000ff00-0000-1000-8000-00805f9b34fb")
+    val LEGACY_SERVICE_UUID: UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
 
     // Characteristic 1: 6-Axis IMU Raw Stream (Notify: 6 floats = 24 bytes)
-    val CHAR_IMU_DATA_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
+    val CHAR_IMU_DATA_UUID: UUID = UUID.fromString("0000ff01-0000-1000-8000-00805f9b34fb")
+    val LEGACY_CHAR_IMU_DATA_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
 
     // Characteristic 2: Crash Event Alert (Notify / Indicate: 0x01 = Crash, 0x00 = Cancel)
-    val CHAR_CRASH_EVENT_UUID: UUID = UUID.fromString("1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e")
+    val CHAR_CRASH_EVENT_UUID: UUID = UUID.fromString("0000ff02-0000-1000-8000-00805f9b34fb")
+    val LEGACY_CHAR_CRASH_EVENT_UUID: UUID = UUID.fromString("1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e")
 
-    // Characteristic 3: Standard BLE Battery Service & Level (0-100%)
+    // Characteristic 3: Helmet Status & Diagnostics (Read)
+    val CHAR_STATUS_UUID: UUID = UUID.fromString("0000ff03-0000-1000-8000-00805f9b34fb")
+
+    // Characteristic 4: Standard BLE Battery Service & Level (0-100%)
     val CHAR_BATTERY_LEVEL_UUID: UUID = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
 
-    // Characteristic 4: Helmet Calibration & Diagnostics (Read/Write)
+    // Characteristic 5: Helmet Calibration & Diagnostics (Read/Write)
     val CHAR_CALIBRATION_UUID: UUID = UUID.fromString("d82098b1-4b15-4c07-b27e-8c3104618e47")
 
     // Standard Client Characteristic Configuration Descriptor (CCCD)

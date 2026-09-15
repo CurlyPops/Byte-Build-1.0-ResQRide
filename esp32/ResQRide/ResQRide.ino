@@ -52,6 +52,7 @@
 #define REG_ACCEL_XOUT_H 0x3B
 
 uint8_t mpuAddress = 0;
+bool mpuReady = false;
 
 // ========================================================================
 // MPU6050 SCALE
@@ -199,9 +200,9 @@ class ServerCallbacks : public BLEServerCallbacks {
       "[BLE] Phone disconnected."
     );
 
-    delay(200);
+    delay(100);
 
-    server->getAdvertising()->start();
+    BLEDevice::startAdvertising();
 
     Serial.println(
       "[BLE] Advertising restarted."
@@ -1347,6 +1348,12 @@ void setup() {
   );
 
   // ----------------------------------------------------------------------
+  // BLE (Started FIRST so Bluetooth connects immediately on power-up)
+  // ----------------------------------------------------------------------
+
+  bleInit();
+
+  // ----------------------------------------------------------------------
   // I2C
   // ----------------------------------------------------------------------
 
@@ -1376,37 +1383,39 @@ void setup() {
   // MPU6050
   // ----------------------------------------------------------------------
 
-  if (
-    !mpuInit()
-  ) {
+  mpuReady = mpuInit();
+
+  if (!mpuReady) {
 
     Serial.println();
     Serial.println(
-      "[FATAL] MPU6050 not found."
+      "[WARNING] MPU6050 not detected at 0x68 or 0x69."
     );
 
     Serial.println(
-      "[FATAL] Check wiring."
+      "[WARNING] Check wiring: VCC->3.3V/5V, GND->GND, SDA->GPIO21, SCL->GPIO22."
     );
 
-    while (true) {
+    Serial.println(
+      "[WARNING] BLE will remain active so you can connect via phone app."
+    );
 
-      digitalWrite(
-        LED_POWER_PIN,
-        !digitalRead(
-          LED_POWER_PIN
-        )
+    if (pStatusChar) {
+      pStatusChar->setValue(
+        "ResQRide Helmet | MPU6050 Offline (Check Wiring)"
       );
+    }
 
-      delay(250);
+  } else {
+
+    mpuCalibrate();
+
+    if (pStatusChar) {
+      pStatusChar->setValue(
+        "ResQRide Helmet v1.0 | Ready | 100Hz"
+      );
     }
   }
-
-  // ----------------------------------------------------------------------
-  // CALIBRATION
-  // ----------------------------------------------------------------------
-
-  mpuCalibrate();
 
   // ----------------------------------------------------------------------
   // BUZZER TEST
@@ -1461,12 +1470,6 @@ void setup() {
   }
 
   // ----------------------------------------------------------------------
-  // BLE
-  // ----------------------------------------------------------------------
-
-  bleInit();
-
-  // ----------------------------------------------------------------------
   // START SAMPLING
   // ----------------------------------------------------------------------
 
@@ -1506,6 +1509,25 @@ void setup() {
 // ========================================================================
 
 void loop() {
+
+  // If MPU6050 was not detected at boot, retry periodically without killing BLE
+  if (!mpuReady) {
+    static unsigned long lastMpuRetry = 0;
+    if (millis() - lastMpuRetry > 3000) {
+      lastMpuRetry = millis();
+      Serial.println("[MPU6050] Retrying sensor detection...");
+      if (mpuInit()) {
+        Serial.println("[MPU6050] Connected! Calibrating...");
+        mpuCalibrate();
+        mpuReady = true;
+        if (pStatusChar) {
+          pStatusChar->setValue("ResQRide Helmet v1.0 | Ready | 100Hz");
+        }
+      }
+    }
+    updateLEDs();
+    return;
+  }
 
   unsigned long now =
     micros();
