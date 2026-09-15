@@ -68,7 +68,7 @@ bool mpuReady = false;
 // CRASH THRESHOLDS (LOWERED FOR HAND-SHAKE TESTING)
 // ========================================================================
 
-const float ACCEL_THRESHOLD_G  = 1.5f;   // Lowered from 4.0g
+const float ACCEL_THRESHOLD_G  = 8.0f;   // Lowered from 4.0g
 const float GYRO_THRESHOLD_DPS = 80.0f;  // Lowered from 300.0 dps
 
 const int SUSTAINED_COUNT = 2;           // Lowered from 3 samples
