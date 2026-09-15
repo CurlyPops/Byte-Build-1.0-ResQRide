@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,7 +28,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurafarmers.resqride.ResQRideApplication
 import com.aurafarmers.resqride.sos.CrashAlertManager
-import com.aurafarmers.resqride.sos.EmergencyCallHelper
 import com.aurafarmers.resqride.ui.theme.EmeraldPrimary
 import com.aurafarmers.resqride.ui.theme.EmergencyRed
 import com.aurafarmers.resqride.ui.theme.EmergencyRedDark
@@ -55,7 +53,6 @@ class CrashAlertActivity : ComponentActivity() {
                 val contacts by prefs.contacts.collectAsState()
                 val userProfile by prefs.userProfile.collectAsState()
                 val primaryContact = contacts.firstOrNull { it.isPrimary } ?: contacts.firstOrNull()
-                val hasPrimaryContact = primaryContact != null && primaryContact.phone.isNotBlank()
 
                 // Auto-close when both alert and SOS are inactive
                 LaunchedEffect(isAlertActive, isSosDispatched) {
@@ -65,23 +62,20 @@ class CrashAlertActivity : ComponentActivity() {
                 }
 
                 if (isSosDispatched) {
-                    ActiveSosAlertContent(
-                        hasPrimaryContact = hasPrimaryContact,
+                    ActiveSosCallContent(
                         primaryContactName = primaryContact?.name ?: "Emergency Contact",
                         primaryContactPhone = primaryContact?.phone ?: "",
-                        onCallPrimaryContactClicked = {
-                            if (primaryContact != null && primaryContact.phone.isNotBlank()) {
-                                crashAlertManager.voiceCallDispatcher.initiateEmergencyVoiceCall(
-                                    primaryContact = primaryContact,
-                                    userProfile = userProfile,
-                                    locationDescription = "${crashAlertManager.currentCrashLat}, ${crashAlertManager.currentCrashLon}"
-                                )
-                            } else {
-                                EmergencyCallHelper.makeEmergencyServicesCall(this@CrashAlertActivity)
-                            }
+                        onRepeatVoiceClicked = {
+                            crashAlertManager.voiceCallDispatcher.forceSpeakerphone()
+                            crashAlertManager.voiceCallDispatcher.speakEmergencyMessage(
+                                userProfile,
+                                "${crashAlertManager.currentCrashLat}, ${crashAlertManager.currentCrashLon}"
+                            )
+                            Toast.makeText(this@CrashAlertActivity, "Playing emergency alert on speaker...", Toast.LENGTH_SHORT).show()
                         },
-                        onCallEmergencyHelplineClicked = {
-                            EmergencyCallHelper.makeEmergencyServicesCall(this@CrashAlertActivity)
+                        onSpeakerphoneClicked = {
+                            crashAlertManager.voiceCallDispatcher.forceSpeakerphone()
+                            Toast.makeText(this@CrashAlertActivity, "Speakerphone forced to maximum volume", Toast.LENGTH_SHORT).show()
                         },
                         onSendSmsFallbackClicked = {
                             if (primaryContact != null) {
@@ -137,16 +131,15 @@ class CrashAlertActivity : ComponentActivity() {
 }
 
 @Composable
-fun ActiveSosAlertContent(
-    hasPrimaryContact: Boolean,
+fun ActiveSosCallContent(
     primaryContactName: String,
     primaryContactPhone: String,
-    onCallPrimaryContactClicked: () -> Unit,
-    onCallEmergencyHelplineClicked: () -> Unit,
+    onRepeatVoiceClicked: () -> Unit,
+    onSpeakerphoneClicked: () -> Unit,
     onSendSmsFallbackClicked: () -> Unit,
     onDismissClicked: () -> Unit
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse_sms")
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse_call")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 0.95f,
         targetValue = 1.08f,
@@ -154,7 +147,7 @@ fun ActiveSosAlertContent(
             animation = tween(800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "sms_pulse"
+        label = "call_pulse"
     )
 
     Box(
@@ -179,7 +172,7 @@ fun ActiveSosAlertContent(
         ) {
             Spacer(modifier = Modifier.height(20.dp))
 
-            // SMS Dispatch Status Card
+            // Calling Status Card
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -195,7 +188,7 @@ fun ActiveSosAlertContent(
                             .background(EmeraldPrimary, shape = CircleShape)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Sms,
+                            imageVector = Icons.Default.PhoneInTalk,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(36.dp)
@@ -206,7 +199,7 @@ fun ActiveSosAlertContent(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = if (hasPrimaryContact) "EMERGENCY ALERTS DISPATCHED" else "EMERGENCY SOS ACTIVE",
+                    text = "EMERGENCY CALL IN PROGRESS",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = EmeraldPrimary,
@@ -216,13 +209,13 @@ fun ActiveSosAlertContent(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = if (hasPrimaryContact) primaryContactName else "Helpline 112",
+                    text = primaryContactName,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White
                 )
 
-                if (hasPrimaryContact && primaryContactPhone.isNotBlank()) {
+                if (primaryContactPhone.isNotBlank()) {
                     Text(
                         text = primaryContactPhone,
                         fontSize = 15.sp,
@@ -231,7 +224,7 @@ fun ActiveSosAlertContent(
                 }
             }
 
-            // SMS Alert Info Card
+            // Voice Alert Info Card
             Card(
                 shape = RoundedCornerShape(18.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.9f)),
@@ -243,14 +236,14 @@ fun ActiveSosAlertContent(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.CheckCircle,
+                            imageVector = Icons.Default.VolumeUp,
                             contentDescription = null,
-                            tint = EmeraldPrimary,
+                            tint = Color(0xFF38BDF8),
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (hasPrimaryContact) "Emergency Alerts Dispatched" else "Emergency Assistance",
+                            text = "Automated Voice Active",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
                             color = Color.White
@@ -258,11 +251,7 @@ fun ActiveSosAlertContent(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = if (hasPrimaryContact) {
-                            "Emergency SMS messages containing your live GPS coordinates, Google Maps link, and nearby hospital contacts have been dispatched to your contacts."
-                        } else {
-                            "Emergency mode triggered. Dial national emergency helpline 112 immediately for ambulance and police assistance."
-                        },
+                        text = "The emergency announcement is looping automatically through the speakerphone every 7 seconds so your contact hears the alert as soon as they answer.",
                         fontSize = 12.sp,
                         color = Color.White.copy(alpha = 0.75f),
                         textAlign = TextAlign.Center,
@@ -271,70 +260,58 @@ fun ActiveSosAlertContent(
                 }
             }
 
-            // Controls
+            // In-Call Assistance Controls
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                if (hasPrimaryContact) {
-                    // Button: Call Primary Contact
-                    Button(
-                        onClick = onCallPrimaryContactClicked,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
-                    ) {
-                        Icon(imageVector = Icons.Default.Call, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Call ${if (primaryContactName.isNotBlank()) primaryContactName else "Contact"}", fontWeight = FontWeight.Bold)
-                    }
-
-                    // Button: Call 112 (Helpline)
-                    OutlinedButton(
-                        onClick = onCallEmergencyHelplineClicked,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFCA5A5))
-                    ) {
-                        Icon(imageVector = Icons.Default.PhoneInTalk, contentDescription = null, tint = Color(0xFFEF4444))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Call 112 (Emergency Helpline)", fontWeight = FontWeight.SemiBold)
-                    }
-
-                    // Button: Send SMS Fallback
-                    OutlinedButton(
-                        onClick = onSendSmsFallbackClicked,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFA7F3D0))
-                    ) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Open Messages App", fontWeight = FontWeight.SemiBold)
-                    }
-                } else {
-                    // Button: Call 112 directly
-                    Button(
-                        onClick = onCallEmergencyHelplineClicked,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = EmergencyRed)
-                    ) {
-                        Icon(imageVector = Icons.Default.Call, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Call 112 (National Emergency)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    }
+                // Button: Repeat Voice Alert Now
+                Button(
+                    onClick = onRepeatVoiceClicked,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
+                ) {
+                    Icon(imageVector = Icons.Default.RecordVoiceOver, contentDescription = null)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Repeat Voice Alert Now",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
                 }
 
-                // Button: Dismiss Alert
+                // Button: Ensure Speakerphone
+                OutlinedButton(
+                    onClick = onSpeakerphoneClicked,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8))
+                ) {
+                    Icon(imageVector = Icons.Default.VolumeUp, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Ensure Speakerphone at Max Volume", fontWeight = FontWeight.SemiBold)
+                }
+
+                // Button: Send SMS Fallback
+                OutlinedButton(
+                    onClick = onSendSmsFallbackClicked,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFA7F3D0))
+                ) {
+                    Icon(imageVector = Icons.Default.Send, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Send Emergency SMS via Messages App", fontWeight = FontWeight.SemiBold)
+                }
+
+                // Button: End / Dismiss
                 TextButton(
                     onClick = onDismissClicked,
                     modifier = Modifier
@@ -342,7 +319,7 @@ fun ActiveSosAlertContent(
                         .height(44.dp)
                 ) {
                     Text(
-                        text = "Dismiss Alert",
+                        text = "Dismiss / Stop Alert Loop",
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 13.sp
                     )

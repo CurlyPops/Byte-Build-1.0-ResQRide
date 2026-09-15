@@ -164,17 +164,15 @@ class CrashAlertManager(private val context: Context) {
                 nearbyHospitals = hospitals
             )
 
-            // 2. Place automated AI Voice Call to primary contact, or fallback to national emergency 112
+            // 2. Place automated AI Voice Call to primary contact
             val primaryContact = contacts.firstOrNull { it.isPrimary } ?: contacts.firstOrNull()
-            withContext(Dispatchers.Main) {
-                if (primaryContact != null && primaryContact.phone.isNotBlank()) {
+            if (primaryContact != null && primaryContact.phone.isNotBlank()) {
+                withContext(Dispatchers.Main) {
                     voiceCallDispatcher.initiateEmergencyVoiceCall(
                         primaryContact = primaryContact,
                         userProfile = userProfile,
                         locationDescription = "$targetLat, $targetLon"
                     )
-                } else {
-                    EmergencyCallHelper.makeEmergencyServicesCall(context)
                 }
             }
         }
