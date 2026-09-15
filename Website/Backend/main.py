@@ -62,6 +62,17 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
+
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css", ".json")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # ---------------------------------------------------------------------------
 # Firebase Admin SDK Initialization
 # ---------------------------------------------------------------------------
@@ -207,7 +218,14 @@ def root(request: Request, id: Optional[str] = None):
     if id or "text/html" in accept:
         index_path = os.path.join(_frontend_dir, "index.html")
         if os.path.exists(index_path):
-            return FileResponse(index_path)
+            return FileResponse(
+                index_path,
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
     return {
         "message": "ResQRide backend is running",
         "timestamp": datetime.now(timezone.utc).isoformat(),

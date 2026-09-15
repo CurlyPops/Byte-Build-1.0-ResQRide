@@ -13,7 +13,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=2.2.0" />
   <link rel="icon"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚨</text></svg>" />
 </head>
@@ -53,8 +53,8 @@
   <!-- ================================================================== -->
   <main class="container" id="mainContent">
 
-    <!-- Loading State -->
-    <div class="loading-state" id="loadingState">
+    <!-- Loading State (hidden by default) -->
+    <div class="loading-state hidden" id="loadingState">
       <div class="loading-spinner"></div>
       <span class="loading-text">Loading emergency profile…</span>
     </div>
@@ -69,8 +69,8 @@
       </button>
     </div>
 
-    <!-- Landing / Rider Lookup State (shown when visiting root without an ?id= parameter) -->
-    <div class="landing-state hidden" id="landingState">
+    <!-- Landing / Rider Lookup State (shown by default on root URL) -->
+    <div class="landing-state" id="landingState">
       <div class="landing-card flow-reveal in-view">
         <div class="landing-card__badge">
           <span class="landing-card__pulse"></span>
@@ -433,8 +433,8 @@
         <div class="doc-paper__clinic" id="docClinic">Hospital / Clinic OPD</div>
         <div class="doc-paper__doctor" id="docDoctor">Consulting Physician</div>
         <div class="doc-paper__meta-row">
-          <span id="docPatient">Patient: Arjun Mehta</span>
-          <span id="docDate">Date: Aug 20, 2026</span>
+          <span id="docPatient">Patient: —</span>
+          <span id="docDate">Date: —</span>
         </div>
         <hr class="doc-paper__divider" />
         <div class="doc-paper__rx-symbol">℞</div>
@@ -470,7 +470,7 @@
         <span class="floating-dial-bar__pulse"></span>
         <div class="floating-dial-bar__text-wrap">
           <span class="floating-dial-bar__title" id="floatingBarTitle">ResQRide Live Incident</span>
-          <span class="floating-dial-bar__sub" id="floatingBarSub">Arjun Mehta · B+</span>
+          <span class="floating-dial-bar__sub" id="floatingBarSub">Rider · Emergency Standby</span>
         </div>
       </div>
       <div class="floating-dial-bar__actions">
@@ -484,7 +484,7 @@
     </div>
   </aside>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2.2.0"></script>
 </body>
 
 </html>
