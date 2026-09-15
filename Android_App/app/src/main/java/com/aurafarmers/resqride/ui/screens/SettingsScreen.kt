@@ -483,6 +483,8 @@ fun ContactRow(
     onSetPrimary: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
         shape = RoundedCornerShape(12.dp),
@@ -526,7 +528,20 @@ fun ContactRow(
                 )
             }
 
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = {
+                        com.aurafarmers.resqride.sos.VoiceCallDispatcher.launchPhoneCall(context, contact.phone)
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Phone,
+                        contentDescription = "Call Contact",
+                        tint = EmeraldPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
                 if (!contact.isPrimary) {
                     TextButton(onClick = onSetPrimary) {
                         Text("Make Primary", fontSize = 11.sp, color = EmeraldPrimary)

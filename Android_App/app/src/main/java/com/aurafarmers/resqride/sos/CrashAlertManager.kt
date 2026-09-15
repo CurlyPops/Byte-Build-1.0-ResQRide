@@ -154,8 +154,21 @@ class CrashAlertManager(private val context: Context) {
             hospitalFinder.getNearbyHospitals(targetLat, targetLon, 5.0)
         }
 
+        // 1. Place automated AI Voice Call to primary contact immediately
+        val primaryContact = contacts.firstOrNull { it.isPrimary } ?: contacts.firstOrNull()
+        if (primaryContact != null && primaryContact.phone.isNotBlank()) {
+            voiceCallDispatcher.initiateEmergencyVoiceCall(
+                primaryContact = primaryContact,
+                userProfile = userProfile,
+                locationDescription = "$targetLat, $targetLon"
+            )
+        } else {
+            // Fallback to national emergency helpline 112 if no contact is configured
+            VoiceCallDispatcher.launchPhoneCall(context, "112")
+        }
+
+        // 2. Send SMS to all emergency contacts quietly in background
         scope.launch(Dispatchers.IO) {
-            // 1. Send SMS to all emergency contacts
             smsDispatcher.sendEmergencyAlerts(
                 contacts = contacts,
                 userProfile = userProfile,
@@ -163,18 +176,6 @@ class CrashAlertManager(private val context: Context) {
                 longitude = targetLon,
                 nearbyHospitals = hospitals
             )
-
-            // 2. Place automated AI Voice Call to primary contact
-            val primaryContact = contacts.firstOrNull { it.isPrimary } ?: contacts.firstOrNull()
-            if (primaryContact != null && primaryContact.phone.isNotBlank()) {
-                withContext(Dispatchers.Main) {
-                    voiceCallDispatcher.initiateEmergencyVoiceCall(
-                        primaryContact = primaryContact,
-                        userProfile = userProfile,
-                        locationDescription = "$targetLat, $targetLon"
-                    )
-                }
-            }
         }
     }
 

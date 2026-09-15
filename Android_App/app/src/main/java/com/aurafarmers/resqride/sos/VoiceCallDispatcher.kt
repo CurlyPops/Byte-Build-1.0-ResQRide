@@ -60,32 +60,14 @@ class VoiceCallDispatcher(private val context: Context) : TextToSpeech.OnInitLis
         userProfile: UserProfile,
         locationDescription: String
     ) {
-        val cleanPhone = primaryContact.phone.replace(" ", "").replace("-", "")
-
-        val callIntent = Intent(Intent.ACTION_CALL).apply {
-            data = Uri.parse("tel:$cleanPhone")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        val cleanPhone = primaryContact.phone.filter { it.isDigit() || it == '+' }
+        if (cleanPhone.isBlank()) {
+            Log.w("VoiceCallDispatcher", "Cannot initiate call: Phone number is empty")
+            return
         }
 
-        try {
-            context.startActivity(callIntent)
-            Log.i("VoiceCallDispatcher", "Initiated emergency phone call to primary contact: $cleanPhone")
-
-            // Start continuous voice repetition loop
-            startEmergencyVoiceLoop(userProfile, locationDescription)
-        } catch (e: Exception) {
-            Log.e("VoiceCallDispatcher", "Failed to initiate direct call, attempting dial intent", e)
-            try {
-                val dialIntent = Intent(Intent.ACTION_DIAL).apply {
-                    data = Uri.parse("tel:$cleanPhone")
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                context.startActivity(dialIntent)
-                startEmergencyVoiceLoop(userProfile, locationDescription)
-            } catch (err: Exception) {
-                Log.e("VoiceCallDispatcher", "Dialer error", err)
-            }
-        }
+        launchPhoneCall(context, cleanPhone)
+        startEmergencyVoiceLoop(userProfile, locationDescription)
     }
 
     /**
@@ -182,6 +164,34 @@ class VoiceCallDispatcher(private val context: Context) : TextToSpeech.OnInitLis
             audioManager?.mode = AudioManager.MODE_NORMAL
         } catch (e: Exception) {
             Log.e("VoiceCallDispatcher", "Error shutting down VoiceCallDispatcher", e)
+        }
+    }
+
+    companion object {
+        fun launchPhoneCall(context: Context, rawPhone: String) {
+            val cleanPhone = rawPhone.filter { it.isDigit() || it == '+' }
+            if (cleanPhone.isBlank()) return
+
+            val callIntent = Intent(Intent.ACTION_CALL).apply {
+                data = Uri.parse("tel:$cleanPhone")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+
+            try {
+                context.startActivity(callIntent)
+                Log.i("VoiceCallDispatcher", "Initiated emergency phone call to: $cleanPhone")
+            } catch (e: Exception) {
+                Log.e("VoiceCallDispatcher", "Failed to initiate direct call, attempting dial intent", e)
+                try {
+                    val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                        data = Uri.parse("tel:$cleanPhone")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(dialIntent)
+                } catch (err: Exception) {
+                    Log.e("VoiceCallDispatcher", "Dialer error", err)
+                }
+            }
         }
     }
 }

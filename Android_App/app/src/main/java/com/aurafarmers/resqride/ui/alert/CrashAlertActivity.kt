@@ -65,6 +65,14 @@ class CrashAlertActivity : ComponentActivity() {
                     ActiveSosCallContent(
                         primaryContactName = primaryContact?.name ?: "Emergency Contact",
                         primaryContactPhone = primaryContact?.phone ?: "",
+                        onCallClicked = {
+                            val targetPhone = if (primaryContact != null && primaryContact.phone.isNotBlank()) {
+                                primaryContact.phone
+                            } else {
+                                "112"
+                            }
+                            com.aurafarmers.resqride.sos.VoiceCallDispatcher.launchPhoneCall(this@CrashAlertActivity, targetPhone)
+                        },
                         onRepeatVoiceClicked = {
                             crashAlertManager.voiceCallDispatcher.forceSpeakerphone()
                             crashAlertManager.voiceCallDispatcher.speakEmergencyMessage(
@@ -134,6 +142,7 @@ class CrashAlertActivity : ComponentActivity() {
 fun ActiveSosCallContent(
     primaryContactName: String,
     primaryContactPhone: String,
+    onCallClicked: () -> Unit,
     onRepeatVoiceClicked: () -> Unit,
     onSpeakerphoneClicked: () -> Unit,
     onSendSmsFallbackClicked: () -> Unit,
@@ -265,21 +274,39 @@ fun ActiveSosCallContent(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Button: Repeat Voice Alert Now
+                // Button: Call Contact Immediately
                 Button(
-                    onClick = onRepeatVoiceClicked,
+                    onClick = onCallClicked,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                 ) {
+                    Icon(imageVector = Icons.Default.Call, contentDescription = null)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = if (primaryContactPhone.isNotBlank()) "Call $primaryContactName" else "Call 112 (Emergency)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                }
+
+                // Button: Repeat Voice Alert Now
+                OutlinedButton(
+                    onClick = onRepeatVoiceClicked,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = EmeraldPrimary)
+                ) {
                     Icon(imageVector = Icons.Default.RecordVoiceOver, contentDescription = null)
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = "Repeat Voice Alert Now",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp
                     )
                 }
 

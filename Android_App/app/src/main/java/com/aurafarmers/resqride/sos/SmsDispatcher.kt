@@ -65,14 +65,6 @@ class SmsDispatcher(private val context: Context) {
             }
         }
 
-        // If background SMS was blocked by Android permissions, open native SMS app fallback
-        if (!anySuccess && permissionDenied) {
-            val primaryContact = contacts.firstOrNull { it.isPrimary } ?: contacts.firstOrNull()
-            if (primaryContact != null) {
-                launchSmsFallback(primaryContact, messageText)
-            }
-        }
-
         return anySuccess
     }
 

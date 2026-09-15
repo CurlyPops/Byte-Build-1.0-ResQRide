@@ -414,20 +414,38 @@ fun FamilyMemberCard(member: FamilyMemberLocation) {
                 }
             }
 
-            // Map navigation action
-            if (member.latitude != 0.0 || member.longitude != 0.0) {
-                IconButton(
-                    onClick = {
-                        val mapUri = Uri.parse("geo:${member.latitude},${member.longitude}?q=${member.latitude},${member.longitude}(${member.name})")
-                        val mapIntent = Intent(Intent.ACTION_VIEW, mapUri)
-                        context.startActivity(mapIntent)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Direct Phone Call Action
+                if (member.phone.isNotBlank()) {
+                    IconButton(
+                        onClick = {
+                            com.aurafarmers.resqride.sos.VoiceCallDispatcher.launchPhoneCall(context, member.phone)
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = "Call member",
+                            tint = EmeraldPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Directions,
-                        contentDescription = "Navigate to member",
-                        tint = if (member.hasCrashed) EmergencyRed else TealAccent
-                    )
+                }
+
+                // Map navigation action
+                if (member.latitude != 0.0 || member.longitude != 0.0) {
+                    IconButton(
+                        onClick = {
+                            val mapUri = Uri.parse("geo:${member.latitude},${member.longitude}?q=${member.latitude},${member.longitude}(${member.name})")
+                            val mapIntent = Intent(Intent.ACTION_VIEW, mapUri)
+                            context.startActivity(mapIntent)
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Directions,
+                            contentDescription = "Navigate to member",
+                            tint = if (member.hasCrashed) EmergencyRed else TealAccent
+                        )
+                    }
                 }
             }
         }
