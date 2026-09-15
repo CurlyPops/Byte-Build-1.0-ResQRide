@@ -1974,6 +1974,223 @@ body {
   }
 }
 
+/* --------------------------------------------------------------------------
+   Emergency Response Landing & Rider Search Portal
+   -------------------------------------------------------------------------- */
+.landing-state {
+  max-width: 640px;
+  margin: 32px auto 48px;
+  padding: 0 10px;
+}
+
+.landing-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  padding: 38px 28px 28px;
+  box-shadow: 0 6px 30px rgba(15, 23, 42, 0.07);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.landing-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #dc2626 0%, #0284c7 50%, #16a34a 100%);
+}
+
+.landing-card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 13px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.landing-card__pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.25);
+  animation: pulse 2s infinite;
+}
+
+.landing-card__icon {
+  font-size: 2.8rem;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+
+.landing-card__title {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+
+.landing-card__subtitle {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  margin: 0 auto 24px;
+  max-width: 500px;
+}
+
+.landing-search-form {
+  margin-bottom: 24px;
+}
+
+.landing-search-box {
+  display: flex;
+  align-items: center;
+  background: #f8fafc;
+  border: 1.5px solid var(--border-card);
+  border-radius: 12px;
+  padding: 5px 6px 5px 14px;
+  transition: all var(--transition-fast);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+}
+
+.landing-search-box:focus-within {
+  background: #ffffff;
+  border-color: #0284c7;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
+}
+
+.landing-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+
+.landing-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  outline: none;
+  min-width: 0;
+}
+
+.landing-search-input::placeholder {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.landing-search-btn {
+  background: #0284c7;
+  color: #ffffff;
+  border: none;
+  border-radius: 9px;
+  padding: 10px 18px;
+  font-family: var(--font-sans);
+  font-size: 0.86rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.landing-search-btn:hover {
+  background: #0369a1;
+  transform: translateY(-1px);
+}
+
+.landing-search-hint {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+.landing-demos {
+  border-top: 1px dashed var(--border-card);
+  padding-top: 20px;
+  margin-bottom: 22px;
+}
+
+.landing-demos__label {
+  display: block;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.landing-demos__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.landing-demo-pill {
+  background: #f8fafc;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.landing-demo-pill:hover {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0369a1;
+  transform: translateY(-1px);
+}
+
+.landing-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-around;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-radius: 10px;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.landing-status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot--online {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #16a34a;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

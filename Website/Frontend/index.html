@@ -64,6 +64,70 @@
       <span class="error-state__icon">⚠️</span>
       <span class="error-state__title">Profile Not Found</span>
       <span class="error-state__message" id="errorMessage">Unable to load emergency data. Please try again.</span>
+      <button class="header-pill-btn" id="btnBackToLanding" type="button" style="margin-top:14px;padding:8px 18px;cursor:pointer;">
+        ← Enter Another Rider ID
+      </button>
+    </div>
+
+    <!-- Landing / Rider Lookup State (shown when visiting root without an ?id= parameter) -->
+    <div class="landing-state hidden" id="landingState">
+      <div class="landing-card flow-reveal in-view">
+        <div class="landing-card__badge">
+          <span class="landing-card__pulse"></span>
+          <span>Emergency First-Responder Portal</span>
+        </div>
+        <div class="landing-card__icon">🪖</div>
+        <h1 class="landing-card__title">ResQRide Medical Triage</h1>
+        <p class="landing-card__subtitle">
+          Scan the physical QR code on the rider's helmet or enter their Rider ID below to immediately access emergency medical records, blood type, drug allergies, and verified prescription documents.
+        </p>
+
+        <!-- Search Form -->
+        <form class="landing-search-form" id="riderSearchForm">
+          <div class="landing-search-box">
+            <svg class="landing-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" class="landing-search-input" id="riderIdInput" placeholder="Enter Rider ID (e.g. user_123 or demo-user-001)" autocomplete="off" spellcheck="false" required>
+            <button type="submit" class="landing-search-btn" id="btnLookupRider">
+              <span>View Profile →</span>
+            </button>
+          </div>
+          <p class="landing-search-hint" id="landingSearchHint">Tip: Camera scan of the helmet QR code will automatically load the rider's live profile.</p>
+        </form>
+
+        <!-- Quick Demo Profiles Switcher for Testing/Evaluators -->
+        <div class="landing-demos">
+          <span class="landing-demos__label">Demo / Evaluation Profiles:</span>
+          <div class="landing-demos__list" id="landingDemosList">
+            <button class="landing-demo-pill" type="button" onclick="window.loadRiderFromLanding('demo-user-001')">
+              👤 Arjun Mehta (B+)
+            </button>
+            <button class="landing-demo-pill" type="button" onclick="window.loadRiderFromLanding('demo-user-002')">
+              👤 Pooja Verma (O-)
+            </button>
+            <button class="landing-demo-pill" type="button" onclick="window.loadRiderFromLanding('demo-user-003')">
+              👤 Rohan Deshmukh (A+)
+            </button>
+          </div>
+        </div>
+
+        <!-- System Status Bar -->
+        <div class="landing-status-bar">
+          <div class="landing-status-item">
+            <span class="status-dot status-dot--online"></span>
+            <span>Cloud API: <strong>Online</strong></span>
+          </div>
+          <div class="landing-status-item">
+            <span class="status-dot status-dot--online"></span>
+            <span>Supabase Storage: <strong>Encrypted</strong></span>
+          </div>
+          <div class="landing-status-item">
+            <span>Fast Triage: <strong>&lt; 150ms</strong></span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Profile Content (hidden until data loads) -->

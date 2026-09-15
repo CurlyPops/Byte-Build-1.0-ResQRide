@@ -24,9 +24,15 @@
   const $ = (id) => document.getElementById(id);
 
   const dom = {
+    crashHeader: $('crashHeader'),
     loadingState: $('loadingState'),
     errorState: $('errorState'),
     errorMessage: $('errorMessage'),
+    btnBackToLanding: $('btnBackToLanding'),
+    landingState: $('landingState'),
+    riderSearchForm: $('riderSearchForm'),
+    riderIdInput: $('riderIdInput'),
+    btnLookupRider: $('btnLookupRider'),
     profileContent: $('profileContent'),
     userName: $('userName'),
     userId: $('userId'),
@@ -149,17 +155,84 @@
   // -----------------------------------------------------------------------
   // URL Param & Personalization
   // -----------------------------------------------------------------------
+  // URL Param & Personalization
+  // -----------------------------------------------------------------------
+  const DEMO_PROFILES = {
+    'demo-user-001': {
+      id: 'demo-user-001',
+      name: 'Arjun Mehta',
+      age: 28,
+      blood_group: 'B+',
+      verified: true,
+      allergies: [
+        { name: 'Penicillin', severity: 'severe' },
+        { name: 'Sulfa Drugs', severity: 'severe' },
+        { name: 'Dust Mites', severity: 'moderate' },
+        { name: 'Latex', severity: 'mild' },
+      ],
+      prescriptions: [
+        { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily' },
+        { name: 'Atorvastatin', dosage: '10mg', frequency: 'Once at bedtime' },
+        { name: 'Cetirizine', dosage: '10mg', frequency: 'Once daily (as needed)' },
+      ],
+      emergency_contacts: [
+        { name: 'Priya Mehta', relation: 'Wife', phone: '+919876543210', is_primary: true },
+        { name: 'Rajesh Mehta', relation: 'Father', phone: '+919812345678', is_primary: false },
+        { name: 'Dr. Kavita Sharma', relation: 'Family Doctor', phone: '+919988776655', is_primary: false },
+      ],
+      medical_notes: 'Type 2 Diabetes (controlled). Mild seasonal allergies. No surgical history.',
+      updated_at: new Date().toISOString(),
+    },
+    'demo-user-002': {
+      id: 'demo-user-002',
+      name: 'Pooja Verma',
+      age: 24,
+      blood_group: 'O-',
+      verified: true,
+      allergies: [
+        { name: 'Aspirin', severity: 'severe' },
+        { name: 'Peanuts', severity: 'severe' },
+      ],
+      prescriptions: [
+        { name: 'Salbutamol Inhaler', dosage: '100mcg', frequency: 'PRN (As needed for asthma)' },
+      ],
+      emergency_contacts: [
+        { name: 'Vikas Verma', relation: 'Brother', phone: '+919876501234', is_primary: true },
+        { name: 'Sunita Verma', relation: 'Mother', phone: '+919876505678', is_primary: false },
+      ],
+      medical_notes: 'Moderate Asthma. Universal red-cell blood donor (O-).',
+      updated_at: new Date().toISOString(),
+    },
+    'demo-user-003': {
+      id: 'demo-user-003',
+      name: 'Rohan Deshmukh',
+      age: 32,
+      blood_group: 'A+',
+      verified: true,
+      allergies: [],
+      prescriptions: [
+        { name: 'Amlodipine', dosage: '5mg', frequency: 'Once daily' },
+      ],
+      emergency_contacts: [
+        { name: 'Neha Deshmukh', relation: 'Wife', phone: '+919811223344', is_primary: true },
+        { name: 'Dr. A. Kulkarni', relation: 'Cardiologist', phone: '+919822334455', is_primary: false },
+      ],
+      medical_notes: 'Mild Hypertension (treated). No drug allergies known.',
+      updated_at: new Date().toISOString(),
+    },
+  };
+
   function getUserIdFromURL() {
     const params = new URLSearchParams(window.location.search);
     const idParam = params.get('id') || params.get('user_id') || params.get('rider');
-    if (idParam) return idParam.trim();
+    if (idParam && idParam.trim()) return idParam.trim();
 
     // Support path-based: /emergency/USER_ID
     const pathMatch = window.location.pathname.match(/\/emergency\/([^/]+)/);
-    if (pathMatch) return pathMatch[1].trim();
+    if (pathMatch && pathMatch[1] && pathMatch[1].trim()) return pathMatch[1].trim();
 
-    // Default to primary demo ID
-    return 'demo-user-001';
+    // Visiting bare root URL -> show landing / search portal
+    return null;
   }
 
   // -----------------------------------------------------------------------
@@ -262,32 +335,13 @@
       console.warn('Med JSON endpoint error:', err.message);
     }
 
-    // Fallback demo profile
-    return {
-      id: userId,
-      name: 'Arjun Mehta',
-      age: 28,
-      blood_group: 'B+',
-      verified: true,
-      allergies: [
-        { name: 'Penicillin', severity: 'severe' },
-        { name: 'Sulfa Drugs', severity: 'severe' },
-        { name: 'Dust Mites', severity: 'moderate' },
-        { name: 'Latex', severity: 'mild' },
-      ],
-      prescriptions: [
-        { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily' },
-        { name: 'Atorvastatin', dosage: '10mg', frequency: 'Once at bedtime' },
-        { name: 'Cetirizine', dosage: '10mg', frequency: 'Once daily (as needed)' },
-      ],
-      emergency_contacts: [
-        { name: 'Priya Mehta', relation: 'Wife', phone: '+919876543210', is_primary: true },
-        { name: 'Rajesh Mehta', relation: 'Father', phone: '+919812345678', is_primary: false },
-        { name: 'Dr. Kavita Sharma', relation: 'Family Doctor', phone: '+919988776655', is_primary: false },
-      ],
-      medical_notes: 'Type 2 Diabetes (controlled). Mild seasonal allergies. No surgical history.',
-      updated_at: new Date().toISOString(),
-    };
+    // 4. Check if requesting a recognized demo profile (Arjun, Pooja, Rohan)
+    if (DEMO_PROFILES[userId]) {
+      return DEMO_PROFILES[userId];
+    }
+
+    // Do NOT show random data for unrecognised IDs
+    return null;
   }
 
   async function fetchPrescriptionFiles(userId) {
@@ -934,6 +988,8 @@
   // -----------------------------------------------------------------------
   function showError(message) {
     dom.loadingState.classList.add('hidden');
+    dom.profileContent.classList.add('hidden');
+    hideLandingState();
     dom.errorMessage.textContent = message;
     dom.errorState.classList.remove('hidden');
   }
@@ -993,7 +1049,7 @@
 
     // 3. Reveal floating emergency dial bar when scrolling past primary actions (~250px)
     if (dom.floatingDialBar) {
-      if (scrollY > 250) {
+      if (userProfile && scrollY > 250) {
         dom.floatingDialBar.classList.add('floating-dial-bar--visible');
         dom.floatingDialBar.setAttribute('aria-hidden', 'false');
       } else {
@@ -1063,12 +1119,81 @@
         });
       }
     });
+
+    // Landing Search Form submission
+    if (dom.riderSearchForm) {
+      dom.riderSearchForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const enteredId = dom.riderIdInput ? dom.riderIdInput.value.trim() : '';
+        if (enteredId) {
+          window.loadRiderFromLanding(enteredId);
+        }
+      });
+    }
+
+    // Back to Landing search portal
+    if (dom.btnBackToLanding) {
+      dom.btnBackToLanding.addEventListener('click', () => {
+        userProfile = null;
+        const url = new URL(window.location);
+        url.searchParams.delete('id');
+        url.searchParams.delete('user_id');
+        url.searchParams.delete('rider');
+        window.history.pushState({}, '', url);
+        showLandingState();
+      });
+    }
   }
+
+  // -----------------------------------------------------------------------
+  // Landing Portal Controls
+  // -----------------------------------------------------------------------
+  function showLandingState() {
+    userProfile = null;
+    if (modalTimer) clearTimeout(modalTimer);
+    dom.loadingState.classList.add('hidden');
+    dom.errorState.classList.add('hidden');
+    dom.profileContent.classList.add('hidden');
+    if (dom.floatingDialBar) {
+      dom.floatingDialBar.classList.remove('floating-dial-bar--visible');
+    }
+    if (dom.landingState) {
+      dom.landingState.classList.remove('hidden');
+    }
+    if (dom.riderIdInput) {
+      setTimeout(() => dom.riderIdInput.focus(), 150);
+    }
+  }
+
+  function hideLandingState() {
+    if (dom.landingState) {
+      dom.landingState.classList.add('hidden');
+    }
+  }
+
+  window.loadRiderFromLanding = function (targetId) {
+    if (!targetId) return;
+    const cleanId = targetId.trim();
+    const url = new URL(window.location);
+    url.searchParams.set('id', cleanId);
+    window.history.pushState({}, '', url);
+    initForUserId(cleanId);
+  };
 
   // -----------------------------------------------------------------------
   // Initialization
   // -----------------------------------------------------------------------
   async function initForUserId(userId) {
+    if (!userId) {
+      showLandingState();
+      return;
+    }
+
+    hideLandingState();
+    dom.errorState.classList.add('hidden');
+    dom.profileContent.classList.add('hidden');
+    dom.loadingState.classList.remove('hidden');
+
     try {
       // Clear any pending timer
       if (modalTimer) clearTimeout(modalTimer);
@@ -1078,6 +1203,11 @@
         fetchProfile(userId),
         fetchPrescriptionFiles(userId),
       ]);
+
+      if (!profile) {
+        showError(`No verified emergency record found for Rider ID "${userId}". Please verify the ID or scan the helmet QR code.`);
+        return;
+      }
 
       renderProfile(profile);
       renderPrescriptionDocuments(rxFiles);
@@ -1091,7 +1221,7 @@
       }, MODAL_DELAY_MS);
     } catch (err) {
       console.error('Initialization failed:', err);
-      showError('Unable to load emergency profile. Please check the QR code URL.');
+      showError(`Unable to load emergency profile for "${userId}". Please check connection and try again.`);
     }
   }
 
