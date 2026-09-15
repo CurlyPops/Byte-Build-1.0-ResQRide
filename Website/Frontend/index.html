@@ -77,6 +77,10 @@
             <p class="user-header__id" id="userId">ID: —</p>
           </div>
           <div class="user-header__quick-actions">
+            <a class="header-pill-btn header-pill-btn--paramedic" id="btnParamedicCard" href="#" target="_blank"
+              title="Open Dynamic Paramedic Triage Card (/med/{id})">
+              <span>🚨 Paramedic Card</span>
+            </a>
             <button class="header-pill-btn" id="btnShowQR" type="button" title="View Personal Helmet QR Code">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
                 stroke-linecap="round" stroke-linejoin="round">
@@ -323,6 +327,9 @@
           Scan with any phone camera to instantly load this rider's verified medical record, emergency contacts, and
           prescription documents.
         </p>
+        <div class="qr-url-target" id="qrUrlTarget" style="font-family:var(--font-mono);font-size:0.75rem;color:var(--blue-dark);background:var(--blue-surface);padding:6px 10px;border-radius:6px;word-break:break-all;margin-top:8px;">
+          https://resqride-oqhy.onrender.com/med/demo-user-001
+        </div>
       </div>
 
       <!-- Quick Switcher to test other personalized profiles -->

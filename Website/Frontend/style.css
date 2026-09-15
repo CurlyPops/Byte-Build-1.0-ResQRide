@@ -410,6 +410,20 @@ body {
   color: #991b1b;
 }
 
+.header-pill-btn--paramedic {
+  border-color: #fca5a5;
+  color: #b91c1c;
+  background: #fef2f2;
+  text-decoration: none;
+}
+
+.header-pill-btn--paramedic:hover {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #7f1d1d;
+  transform: translateY(-1px);
+}
+
 /* --------------------------------------------------------------------------
    Primary Action Buttons
    -------------------------------------------------------------------------- */
@@ -994,6 +1008,20 @@ body {
 .btn-doc-view:hover {
   background: #e0f2fe;
   border-color: var(--blue-primary);
+  transform: translateY(-1px);
+}
+
+.btn-doc-view--direct {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #0284c7;
+  text-decoration: none;
+}
+
+.btn-doc-view--direct:hover {
+  background: #0369a1;
+  color: #ffffff;
+  border-color: #0369a1;
   transform: translateY(-1px);
 }
 

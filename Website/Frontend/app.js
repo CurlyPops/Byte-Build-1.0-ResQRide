@@ -56,6 +56,7 @@
     // Distress Modal
     distressModal: $('distressModal'),
     btnTriggerTriage: $('btnTriggerTriage'),
+    btnParamedicCard: $('btnParamedicCard'),
 
     // QR Modal
     qrModal: $('qrModal'),
@@ -65,6 +66,7 @@
     qrRiderName: $('qrRiderName'),
     qrRiderBlood: $('qrRiderBlood'),
     qrProfilesList: $('qrProfilesList'),
+    qrUrlTarget: $('qrUrlTarget'),
     btnCopyQRLink: $('btnCopyQRLink'),
     btnDownloadQR: $('btnDownloadQR'),
 
@@ -161,85 +163,195 @@
   }
 
   // -----------------------------------------------------------------------
-  // API Calls
+  // API Calls & Schema Normalization
   // -----------------------------------------------------------------------
+  function normalizeProfile(raw, userId) {
+    if (!raw) return null;
+    const cleanId = raw.id || raw.uid || userId;
+    const name = raw.fullName || raw.name || 'Unknown Rider';
+    const bloodGroup = raw.bloodGroup || raw.blood_group || '—';
+    const age = raw.age || 0;
+    const notes = raw.emergencyNotes || raw.medical_notes || '';
+
+    // Normalize allergies: handle string[] or object[]
+    const rawAllergies = raw.allergies || [];
+    const allergies = rawAllergies.map((a) => {
+      if (typeof a === 'string') {
+        return { name: a, severity: 'severe' };
+      }
+      return { name: a.name || 'Allergy', severity: a.severity || 'severe' };
+    });
+
+    // Normalize prescriptions / medications: handle string[] or object[]
+    const rawMeds = raw.prescriptions || raw.medications || [];
+    const prescriptions = rawMeds.map((m) => {
+      if (typeof m === 'string') {
+        return { name: m, dosage: '', frequency: '' };
+      }
+      return {
+        name: m.name || 'Medication',
+        dosage: m.dosage || '',
+        frequency: m.frequency || '',
+      };
+    });
+
+    // Normalize contacts: handle relation or relationship
+    const rawContacts = raw.emergencyContacts || raw.emergency_contacts || [];
+    const contacts = rawContacts.map((c) => ({
+      name: c.name || 'Contact',
+      relation: c.relation || c.relationship || 'Emergency Contact',
+      phone: c.phone || '',
+      is_primary: Boolean(c.isPrimary || c.is_primary),
+    }));
+
+    return {
+      id: cleanId,
+      name,
+      fullName: name,
+      age,
+      blood_group: bloodGroup,
+      bloodGroup,
+      verified: raw.verified !== undefined ? raw.verified : true,
+      allergies,
+      prescriptions,
+      emergency_contacts: contacts,
+      emergencyContacts: contacts,
+      medical_notes: notes,
+      emergencyNotes: notes,
+      updated_at: raw.updated_at || new Date().toISOString(),
+    };
+  }
+
   async function fetchProfile(userId) {
+    // 1. Try public emergency endpoint
     try {
       const response = await fetch(`${API_BASE}/api/emergency/${encodeURIComponent(userId)}`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      if (data.success && data.profile) {
-        return data.profile;
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.profile) {
+          return normalizeProfile(data.profile, userId);
+        }
       }
-      throw new Error('Invalid response format');
     } catch (err) {
-      console.warn('Profile API fallback used:', err.message);
-      return {
-        id: userId,
-        name: 'Arjun Mehta',
-        age: 28,
-        blood_group: 'B+',
-        verified: true,
-        allergies: [
-          { name: 'Penicillin', severity: 'severe' },
-          { name: 'Sulfa Drugs', severity: 'severe' },
-          { name: 'Dust Mites', severity: 'moderate' },
-          { name: 'Latex', severity: 'mild' },
-        ],
-        prescriptions: [
-          { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily' },
-          { name: 'Atorvastatin', dosage: '10mg', frequency: 'Once at bedtime' },
-          { name: 'Cetirizine', dosage: '10mg', frequency: 'Once daily (as needed)' },
-        ],
-        emergency_contacts: [
-          { name: 'Priya Mehta', relation: 'Wife', phone: '+919876543210' },
-          { name: 'Rajesh Mehta', relation: 'Father', phone: '+919812345678' },
-          { name: 'Dr. Kavita Sharma', relation: 'Family Doctor', phone: '+919988776655' },
-        ],
-        medical_notes: 'Type 2 Diabetes (controlled). Mild seasonal allergies. No surgical history.',
-        updated_at: new Date().toISOString(),
-      };
+      console.warn('Profile emergency endpoint error:', err.message);
     }
+
+    // 2. Try Supabase direct profile endpoint
+    try {
+      const profRes = await fetch(`${API_BASE}/api/profile/${encodeURIComponent(userId)}`);
+      if (profRes.ok) {
+        const profData = await profRes.json();
+        if (profData.success && profData.profile) {
+          return normalizeProfile(profData.profile, userId);
+        }
+      }
+    } catch (err) {
+      console.warn('Profile direct endpoint error:', err.message);
+    }
+
+    // 3. Try medical triage JSON endpoint
+    try {
+      const medRes = await fetch(`${API_BASE}/api/med/${encodeURIComponent(userId)}`);
+      if (medRes.ok) {
+        const medData = await medRes.json();
+        if (medData.success && medData.data && medData.data.profile) {
+          return normalizeProfile(medData.data.profile, userId);
+        }
+      }
+    } catch (err) {
+      console.warn('Med JSON endpoint error:', err.message);
+    }
+
+    // Fallback demo profile
+    return {
+      id: userId,
+      name: 'Arjun Mehta',
+      age: 28,
+      blood_group: 'B+',
+      verified: true,
+      allergies: [
+        { name: 'Penicillin', severity: 'severe' },
+        { name: 'Sulfa Drugs', severity: 'severe' },
+        { name: 'Dust Mites', severity: 'moderate' },
+        { name: 'Latex', severity: 'mild' },
+      ],
+      prescriptions: [
+        { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily' },
+        { name: 'Atorvastatin', dosage: '10mg', frequency: 'Once at bedtime' },
+        { name: 'Cetirizine', dosage: '10mg', frequency: 'Once daily (as needed)' },
+      ],
+      emergency_contacts: [
+        { name: 'Priya Mehta', relation: 'Wife', phone: '+919876543210', is_primary: true },
+        { name: 'Rajesh Mehta', relation: 'Father', phone: '+919812345678', is_primary: false },
+        { name: 'Dr. Kavita Sharma', relation: 'Family Doctor', phone: '+919988776655', is_primary: false },
+      ],
+      medical_notes: 'Type 2 Diabetes (controlled). Mild seasonal allergies. No surgical history.',
+      updated_at: new Date().toISOString(),
+    };
   }
 
   async function fetchPrescriptionFiles(userId) {
+    // 1. Try public prescriptions endpoint
     try {
       const response = await fetch(`${API_BASE}/api/emergency/${encodeURIComponent(userId)}/prescriptions`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      if (data.success && Array.isArray(data.files)) {
-        return data.files;
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && Array.isArray(data.files) && data.files.length > 0) {
+          return data.files;
+        }
       }
-      return [];
     } catch (err) {
-      console.warn('Prescriptions API fallback used:', err.message);
-      return [
-        {
-          file_id: 'mock-rx-001',
-          filename: 'Dr_Sharma_Endocrinology_Prescription.pdf',
-          signed_url: null,
-          content_type: 'application/pdf',
-          size: 245760,
-          created_at: '2026-08-20T10:30:00Z',
-          type: 'medical_prescription',
-          doctor: 'Dr. Kavita Sharma, MD (Endocrinology)',
-          clinic: 'Max Healthcare Saket, New Delhi',
-          medications: ['Metformin 500mg BD (after meals)', 'Atorvastatin 10mg HS (bedtime)', 'Cetirizine 10mg SOS'],
-        },
-        {
-          file_id: 'mock-rx-002',
-          filename: 'Blood_Glucose_HbA1c_Lab_Report.pdf',
-          signed_url: null,
-          content_type: 'application/pdf',
-          size: 189440,
-          created_at: '2026-09-05T14:15:00Z',
-          type: 'lab_report',
-          doctor: 'Dr. S. Nair, Senior Pathologist',
-          clinic: 'Dr. Lal PathLabs, Delhi Regional Lab',
-          medications: ['HbA1c: 6.8% (Good Control)', 'Fasting Plasma Glucose: 112 mg/dL', 'Postprandial: 145 mg/dL'],
-        },
-      ];
+      console.warn('Prescriptions emergency endpoint error:', err.message);
     }
+
+    // 2. Try medical triage JSON endpoint for prescription_documents
+    try {
+      const medRes = await fetch(`${API_BASE}/api/med/${encodeURIComponent(userId)}`);
+      if (medRes.ok) {
+        const medData = await medRes.json();
+        const docs = medData.data && medData.data.prescription_documents;
+        if (Array.isArray(docs) && docs.length > 0) {
+          return docs.map((d) => ({
+            file_id: d.storage_path || d.filename,
+            filename: d.filename,
+            signed_url: d.signed_url,
+            content_type: 'application/pdf',
+            size: 245760,
+            type: 'medical_prescription',
+          }));
+        }
+      }
+    } catch (err) {
+      console.warn('Prescriptions med JSON endpoint error:', err.message);
+    }
+
+    // Default mock demonstration prescriptions
+    return [
+      {
+        file_id: 'mock-rx-001',
+        filename: 'Dr_Sharma_Endocrinology_Prescription.pdf',
+        signed_url: null,
+        content_type: 'application/pdf',
+        size: 245760,
+        created_at: '2026-08-20T10:30:00Z',
+        type: 'medical_prescription',
+        doctor: 'Dr. Kavita Sharma, MD (Endocrinology)',
+        clinic: 'Max Healthcare Saket, New Delhi',
+        medications: ['Metformin 500mg BD (after meals)', 'Atorvastatin 10mg HS (bedtime)', 'Cetirizine 10mg SOS'],
+      },
+      {
+        file_id: 'mock-rx-002',
+        filename: 'Blood_Glucose_HbA1c_Lab_Report.pdf',
+        signed_url: null,
+        content_type: 'application/pdf',
+        size: 189440,
+        created_at: '2026-09-05T14:15:00Z',
+        type: 'lab_report',
+        doctor: 'Dr. S. Nair, Senior Pathologist',
+        clinic: 'Dr. Lal PathLabs, Delhi Regional Lab',
+        medications: ['HbA1c: 6.8% (Good Control)', 'Fasting Plasma Glucose: 112 mg/dL', 'Postprandial: 145 mg/dL'],
+      },
+    ];
   }
 
   async function fetchHospitals(lat, lng) {
@@ -342,6 +454,11 @@
     dom.userName.textContent = profile.name || 'Unknown Rider';
     dom.userId.textContent = `ID: ${profile.id || '—'}`;
     dom.headerTimestamp.textContent = `Updated ${timeAgo(profile.updated_at)} · helmet sensor`;
+
+    // Dynamic Paramedic Card link
+    if (dom.btnParamedicCard) {
+      dom.btnParamedicCard.href = `${API_BASE}/med/${encodeURIComponent(profile.id || 'demo-user-001')}`;
+    }
 
     // Floating dial bar text
     if (dom.floatingBarSub) {
@@ -478,6 +595,14 @@
         const dateStr = formatDate(file.created_at);
         const doctorStr = file.doctor ? ` · ${escapeHTML(file.doctor)}` : '';
 
+        const actionBtn = file.signed_url
+          ? `<a href="${escapeHTML(file.signed_url)}" target="_blank" rel="noopener noreferrer" class="btn-doc-view btn-doc-view--direct" title="Open Authenticated Signed PDF">
+               <span>📄 Open PDF ↗</span>
+             </a>`
+          : `<button class="btn-doc-view" type="button" onclick="window.viewDocument(${idx})">
+               <span>👁️ View</span>
+             </button>`;
+
         return `
         <div class="prescription-doc-card flow-stagger-item stagger-${(idx % 5) + 1}">
           <div class="doc-badge-icon">PDF</div>
@@ -491,9 +616,7 @@
             </div>
           </div>
           <div class="doc-actions">
-            <button class="btn-doc-view" type="button" onclick="window.viewDocument(${idx})">
-              <span>👁️ View</span>
-            </button>
+            ${actionBtn}
           </div>
         </div>`;
       })
@@ -683,9 +806,14 @@
     dom.qrRiderName.textContent = userProfile.name || 'Rider';
     dom.qrRiderBlood.textContent = userProfile.blood_group || 'O+';
 
+    // The physical helmet QR points directly to the first-responder Paramedic Triage Card
+    const targetUrl = `https://resqride-oqhy.onrender.com/med/${encodeURIComponent(userProfile.id)}`;
+    if (dom.qrUrlTarget) {
+      dom.qrUrlTarget.textContent = targetUrl;
+    }
+
     // Generate exact personal QR code URL
-    const currentUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(userProfile.id)}`;
-    const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(currentUrl)}&color=000000&bgcolor=ffffff&qzone=2`;
+    const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(targetUrl)}&color=000000&bgcolor=ffffff&qzone=2`;
     dom.qrImage.src = qrApiUrl;
 
     // Load demo profiles for quick testing/switching
@@ -721,10 +849,10 @@
   };
 
   function copyProfileLink() {
-    const url = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(userProfile ? userProfile.id : 'demo-user-001')}`;
-    navigator.clipboard.writeText(url).then(() => {
+    const targetUrl = `https://resqride-oqhy.onrender.com/med/${encodeURIComponent(userProfile ? userProfile.id : 'demo-user-001')}`;
+    navigator.clipboard.writeText(targetUrl).then(() => {
       const originalText = dom.btnCopyQRLink.textContent;
-      dom.btnCopyQRLink.textContent = '✓ Copied Link!';
+      dom.btnCopyQRLink.textContent = '✓ Copied Med URL!';
       dom.btnCopyQRLink.style.borderColor = 'var(--green-safe)';
       setTimeout(() => {
         dom.btnCopyQRLink.textContent = originalText;
@@ -782,6 +910,7 @@
     if (file.signed_url) {
       dom.btnDocDownloadReal.href = file.signed_url;
       dom.btnDocDownloadReal.classList.remove('hidden');
+      dom.btnDocDownloadReal.onclick = null;
     } else {
       // Mock demonstration link
       dom.btnDocDownloadReal.href = '#';
@@ -966,8 +1095,27 @@
     }
   }
 
+  async function checkCloudHealth() {
+    try {
+      const res = await fetch(`${API_BASE}/health`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'ok') {
+          const isSupabaseConfigured = data.supabase && data.supabase.configured;
+          if (dom.storageSyncPill && isSupabaseConfigured) {
+            dom.storageSyncPill.textContent = '⚡ Supabase Synced';
+            dom.storageSyncPill.title = 'Live Supabase Cloud Storage Connected';
+          }
+        }
+      }
+    } catch {
+      // Ignore background health check failures
+    }
+  }
+
   function init() {
     setupEventListeners();
+    checkCloudHealth();
     const userId = getUserIdFromURL();
     initForUserId(userId);
   }
