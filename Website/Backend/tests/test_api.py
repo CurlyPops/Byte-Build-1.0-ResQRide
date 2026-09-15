@@ -96,7 +96,7 @@ def test_upload_valid_pdf_success(client):
     mock_supabase.storage.from_().upload.return_value = {"Key": "test-user-123/sample.pdf"}
 
     try:
-        with patch("main.get_supabase_client", return_value=mock_supabase):
+        with patch("main.get_supabase_client", return_value=mock_supabase), patch("main.is_firebase_initialized", return_value=False):
             valid_pdf = b"%PDF-1.4\n%ResQRide Prescription Sample\n%%EOF"
             files = {"file": ("prescription.pdf", valid_pdf, "application/pdf")}
             response = client.post("/api/files/upload", files=files)
@@ -152,7 +152,7 @@ def test_delete_file_success(client):
     mock_supabase.storage.from_().remove.return_value = [{"name": "user-456/doc123.pdf"}]
 
     try:
-        with patch("main.get_supabase_client", return_value=mock_supabase):
+        with patch("main.get_supabase_client", return_value=mock_supabase), patch("main.is_firebase_initialized", return_value=False):
             response = client.delete("/api/files/doc123")
             assert response.status_code == 200
             data = response.json()
@@ -286,4 +286,68 @@ def test_dynamic_medical_triage_html_not_found(client):
         assert res_html.status_code == 200
         assert "Rider Profile Pending Sync" in res_html.text
         assert "unknown_rider_id" in res_html.text
+
+
+def test_public_emergency_profile(client):
+    # Public endpoint requires no auth
+    response = client.get("/api/emergency/demo-user-001")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["profile"]["name"] == "Arjun Mehta"
+    assert data["profile"]["blood_group"] == "B+"
+    assert len(data["profile"]["allergies"]) > 0
+    assert len(data["profile"]["prescriptions"]) > 0
+    assert len(data["profile"]["emergency_contacts"]) > 0
+
+
+def test_public_emergency_prescriptions(client):
+    # Public endpoint returns prescription documents
+    response = client.get("/api/emergency/demo-user-001/prescriptions")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert len(data["files"]) > 0
+    first = data["files"][0]
+    assert "filename" in first
+    assert first["content_type"] == "application/pdf"
+
+
+def test_public_demo_profiles_list(client):
+    response = client.get("/api/emergency/profiles")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert len(data["profiles"]) >= 3
+
+
+def test_save_emergency_profile_api(client):
+    new_profile = {
+        "id": "test-rider-999",
+        "name": "Siddharth Malhotra",
+        "age": 29,
+        "blood_group": "AB+",
+        "allergies": [{"name": "Dust", "severity": "mild"}],
+        "prescriptions": [{"name": "Cetirizine", "dosage": "10mg", "frequency": "Daily"}],
+        "emergency_contacts": [{"name": "Neha", "relation": "Sister", "phone": "+919999999999"}],
+    }
+    response = client.post("/api/emergency/profile", json=new_profile)
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    # Verify profile is immediately retrievable
+    get_res = client.get("/api/emergency/test-rider-999")
+    assert get_res.status_code == 200
+    assert get_res.json()["profile"]["name"] == "Siddharth Malhotra"
+    assert get_res.json()["profile"]["blood_group"] == "AB+"
+
+
+def test_nearby_hospitals(client):
+    response = client.get("/api/hospitals/nearby?lat=28.5672&lng=77.2100")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert len(data["hospitals"]) > 0
+    assert "name" in data["hospitals"][0]
+    assert "distance_km" in data["hospitals"][0]
 

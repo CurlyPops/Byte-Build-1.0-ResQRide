@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="description"
+    content="ResQRide Emergency Response — Critical medical information and emergency actions for crash victims" />
+  <meta name="theme-color" content="#f8fafc" />
+  <title>ResQRide — Emergency Response</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚨</text></svg>" />
+</head>
+
+<body>
+  <!-- Ambient background glow effects -->
+  <div class="ambient-glow ambient-glow--top" aria-hidden="true"></div>
+  <div class="ambient-glow ambient-glow--accent" aria-hidden="true"></div>
+  <div class="ambient-glow ambient-glow--bottom" aria-hidden="true"></div>
+
+  <!-- ================================================================== -->
+  <!-- CRASH DETECTED HEADER STRIP                                        -->
+  <!-- ================================================================== -->
+  <header class="crash-header" id="crashHeader">
+    <div class="crash-header__left">
+      <span class="crash-header__pulse"></span>
+      <span class="crash-header__text">Crash Detected · Telemetry Live</span>
+    </div>
+    <div class="crash-header__right">
+      <span class="crash-header__badge">
+        <svg viewBox="0 0 20 20">
+          <path
+            d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" />
+        </svg>
+        Verified Medical ID
+      </span>
+      <span class="crash-header__timestamp" id="headerTimestamp">Updated from helmet sensor</span>
+    </div>
+    <!-- Scroll Flow Progress Indicator -->
+    <div class="scroll-progress-track" aria-hidden="true">
+      <div class="scroll-progress-bar" id="scrollProgressBar"></div>
+    </div>
+  </header>
+
+  <!-- ================================================================== -->
+  <!-- MAIN CONTENT                                                       -->
+  <!-- ================================================================== -->
+  <main class="container" id="mainContent">
+
+    <!-- Loading State -->
+    <div class="loading-state" id="loadingState">
+      <div class="loading-spinner"></div>
+      <span class="loading-text">Loading emergency profile…</span>
+    </div>
+
+    <!-- Error State (hidden by default) -->
+    <div class="error-state hidden" id="errorState">
+      <span class="error-state__icon">⚠️</span>
+      <span class="error-state__title">Profile Not Found</span>
+      <span class="error-state__message" id="errorMessage">Unable to load emergency data. Please try again.</span>
+    </div>
+
+    <!-- Profile Content (hidden until data loads) -->
+    <div class="hidden" id="profileContent">
+
+      <!-- User Header -->
+      <section class="user-header flow-reveal">
+        <div class="user-header__title-row">
+          <div>
+            <h1 class="user-header__name" id="userName">—</h1>
+            <p class="user-header__id" id="userId">ID: —</p>
+          </div>
+          <div class="user-header__quick-actions">
+            <button class="header-pill-btn" id="btnShowQR" type="button" title="View Personal Helmet QR Code">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+              <span>Helmet QR</span>
+            </button>
+            <button class="header-pill-btn header-pill-btn--triage" id="btnTriggerTriage" type="button"
+              title="Open Distress Assessment">
+              <span>🆘 Assess</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- PRIMARY ACTION BUTTONS                                       -->
+      <!-- ============================================================ -->
+      <section class="primary-actions flow-reveal" id="primaryActions">
+        <a href="tel:102" class="btn-action btn-action--ambulance" id="btnCallAmbulance">
+          <span class="btn-action__icon">🚑</span>
+          <span class="btn-action__label">Call Ambulance</span>
+          <span class="btn-action__sublabel">Dial 102</span>
+        </a>
+        <a href="#" class="btn-action btn-action--contact" id="btnCallContact">
+          <span class="btn-action__icon">📞</span>
+          <span class="btn-action__label">Call Contact</span>
+          <span class="btn-action__sublabel" id="contactBtnName">Emergency Contact</span>
+        </a>
+      </section>
+
+      <!-- Scroll Flow Cue -->
+      <div class="scroll-flow-hint" id="scrollFlowHint">
+        <span class="scroll-flow-hint__text">Scroll to review verified medical data & nearby trauma centers</span>
+        <span class="scroll-flow-hint__icon">↓</span>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- CRITICAL MEDICAL INFORMATION                                 -->
+      <!-- ============================================================ -->
+      <section class="card flow-reveal" id="medicalCard">
+        <div class="card__header">
+          <div class="card__icon card__icon--medical">🩸</div>
+          <h2 class="card__title">Critical Medical Info</h2>
+        </div>
+
+        <!-- Blood Group + Age -->
+        <div class="stats-row">
+          <div class="stat-box">
+            <div class="stat-box__label">Blood Group</div>
+            <div class="stat-box__value stat-box__value--blood" id="bloodGroup">—</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-box__label">Age</div>
+            <div class="stat-box__value" id="age">—</div>
+          </div>
+        </div>
+
+        <!-- Allergies -->
+        <div class="allergy-section">
+          <div class="allergy-section__label">Allergies</div>
+          <div class="allergy-badges" id="allergyBadges">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Prescriptions -->
+        <div class="prescriptions-section">
+          <div class="prescriptions-section__label">Current Prescriptions</div>
+          <div class="prescription-list" id="prescriptionList">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Medical Notes -->
+        <div class="medical-notes hidden" id="medicalNotes"></div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- EMERGENCY CONTACTS                                           -->
+      <!-- ============================================================ -->
+      <section class="card flow-reveal" id="contactsCard">
+        <div class="card__header">
+          <div class="card__icon card__icon--contacts">👤</div>
+          <h2 class="card__title">Emergency Contacts</h2>
+        </div>
+        <div id="contactsList">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- PRESCRIPTION DOCUMENTS (from Firebase & Supabase)            -->
+      <!-- ============================================================ -->
+      <section class="card flow-reveal" id="prescriptionsCard">
+        <div class="card__header">
+          <div class="card__icon card__icon--prescriptions">📄</div>
+          <div class="card__header-text">
+            <h2 class="card__title">Prescription Documents</h2>
+            <span class="card__subtitle">Synced from Firebase & Supabase Cloud Storage</span>
+          </div>
+          <span class="storage-sync-pill" id="storageSyncPill">Verified PDFs</span>
+        </div>
+        <div id="prescriptionFilesList">
+          <!-- Loading skeleton -->
+          <div class="skeleton-row">
+            <div class="skeleton-block" style="width:100%;height:56px;"></div>
+          </div>
+          <div class="skeleton-row">
+            <div class="skeleton-block" style="width:100%;height:56px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- ACCURATE LOCATION STATUS BAR                                 -->
+      <!-- ============================================================ -->
+      <div class="location-bar flow-reveal" id="locationBar">
+        <div class="location-bar__icon-wrap">
+          <span class="location-bar__pulse" id="locationPulse"></span>
+          <span class="location-bar__icon">📍</span>
+        </div>
+        <div class="location-bar__info">
+          <div class="location-bar__title-row">
+            <span class="location-bar__text" id="locationText">Acquiring accurate GPS location…</span>
+            <span class="location-bar__accuracy hidden" id="locationAccuracy">±0m</span>
+          </div>
+          <span class="location-bar__sub" id="locationSub">Using high-precision device sensors</span>
+        </div>
+        <button class="location-bar__refresh" id="btnRefreshLocation" type="button" title="Refresh GPS coordinates">
+          🔄
+        </button>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- NEARBY HOSPITALS                                             -->
+      <!-- ============================================================ -->
+      <section class="card flow-reveal" id="hospitalsCard">
+        <div class="card__header">
+          <div class="card__icon card__icon--hospitals">🏥</div>
+          <h2 class="card__title">Nearby Hospitals</h2>
+        </div>
+        <div id="hospitalsList">
+          <!-- Loading skeleton -->
+          <div class="skeleton-row">
+            <div class="skeleton-block" style="width:100%;height:52px;"></div>
+          </div>
+          <div class="skeleton-row">
+            <div class="skeleton-block" style="width:100%;height:52px;"></div>
+          </div>
+          <div class="skeleton-row">
+            <div class="skeleton-block" style="width:100%;height:52px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- FOOTER                                                       -->
+      <!-- ============================================================ -->
+      <footer class="footer flow-reveal">
+        <p class="footer__text">
+          Data shown only after a real crash trigger · updated from helmet sensor
+        </p>
+        <p class="footer__logo">RESQRIDE</p>
+      </footer>
+
+    </div><!-- /profileContent -->
+  </main>
+
+  <!-- ================================================================== -->
+  <!-- DISTRESS CONFIRMATION MODAL (Timed Bystander Assessment)           -->
+  <!-- ================================================================== -->
+  <div class="modal-overlay" id="distressModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal__icon">🆘</div>
+      <h2 class="modal__title" id="modalTitle">Emergency Assistance</h2>
+      <p class="modal__subtitle">
+        Is the person in front of you in distress?<br />
+        Please answer these quick questions before calling for help.
+      </p>
+
+      <div class="modal__questions" id="modalQuestions">
+        <div class="modal__question" data-question="conscious">
+          <span class="modal__question-text">Is the person conscious?</span>
+          <div class="modal__question-toggle">
+            <button class="toggle-btn" data-answer="yes" onclick="toggleAnswer(this)">Yes</button>
+            <button class="toggle-btn" data-answer="no" onclick="toggleAnswer(this)">No</button>
+          </div>
+        </div>
+        <div class="modal__question" data-question="breathing">
+          <span class="modal__question-text">Are they breathing?</span>
+          <div class="modal__question-toggle">
+            <button class="toggle-btn" data-answer="yes" onclick="toggleAnswer(this)">Yes</button>
+            <button class="toggle-btn" data-answer="no" onclick="toggleAnswer(this)">No</button>
+          </div>
+        </div>
+        <div class="modal__question" data-question="bleeding">
+          <span class="modal__question-text">Is there visible bleeding?</span>
+          <div class="modal__question-toggle">
+            <button class="toggle-btn" data-answer="yes" onclick="toggleAnswer(this)">Yes</button>
+            <button class="toggle-btn" data-answer="no" onclick="toggleAnswer(this)">No</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal__actions">
+        <button class="modal__btn-emergency" id="btnModalCallAmbulance" onclick="callAmbulance()">
+          🚑 Call Ambulance Now — Dial 102
+        </button>
+        <button class="modal__btn-dismiss" id="btnDismissModal" onclick="dismissModal()">
+          Not an emergency — View medical info only
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- PERSONALIZED HELMET QR MODAL                                       -->
+  <!-- ================================================================== -->
+  <div class="modal-overlay" id="qrModal">
+    <div class="modal qr-modal" role="dialog" aria-modal="true" aria-labelledby="qrModalTitle">
+      <div class="qr-modal__header">
+        <div class="card__icon card__icon--medical" style="font-size:1.4rem;">🏁</div>
+        <div>
+          <h2 class="modal__title" id="qrModalTitle" style="font-size:1.15rem;margin:0;">Personalized Helmet QR</h2>
+          <span class="qr-modal__sub" id="qrModalSub">Unique code for helmet sticker</span>
+        </div>
+        <button class="modal__close-btn" id="btnCloseQRModal" type="button" aria-label="Close">✕</button>
+      </div>
+
+      <div class="qr-card">
+        <div class="qr-image-wrapper">
+          <img id="qrImage" class="qr-image" src="" alt="ResQRide Helmet QR Code" />
+          <div class="qr-center-logo">R</div>
+        </div>
+        <div class="qr-rider-badge">
+          <span class="qr-rider-name" id="qrRiderName">—</span>
+          <span class="qr-rider-blood" id="qrRiderBlood">—</span>
+        </div>
+        <p class="qr-card__hint">
+          Scan with any phone camera to instantly load this rider's verified medical record, emergency contacts, and
+          prescription documents.
+        </p>
+      </div>
+
+      <!-- Quick Switcher to test other personalized profiles -->
+      <div class="qr-profiles-section">
+        <div class="qr-profiles-label">Switch Rider Profile to Test:</div>
+        <div class="qr-profiles-list" id="qrProfilesList">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <div class="qr-actions">
+        <button class="btn-qr-action" id="btnCopyQRLink" type="button">
+          📋 Copy Profile Link
+        </button>
+        <button class="btn-qr-action btn-qr-action--primary" id="btnDownloadQR" type="button">
+          ⬇️ Download Sticker QR
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- PRESCRIPTION DOCUMENT VIEWER MODAL                                 -->
+  <!-- ================================================================== -->
+  <div class="modal-overlay" id="docViewerModal">
+    <div class="modal doc-modal" role="dialog" aria-modal="true" aria-labelledby="docViewerTitle">
+      <div class="doc-modal__header">
+        <div class="card__icon card__icon--prescriptions" style="font-size:1.3rem;">📄</div>
+        <div style="flex:1;">
+          <h2 class="modal__title" id="docViewerTitle" style="font-size:1.1rem;margin:0;">Medical Document</h2>
+          <span class="doc-modal__sub" id="docViewerSub">Verified Cloud Record · Supabase & Firebase</span>
+        </div>
+        <button class="modal__close-btn" id="btnCloseDocModal" type="button" aria-label="Close">✕</button>
+      </div>
+
+      <div class="doc-paper" id="docPaper">
+        <div class="doc-paper__clinic" id="docClinic">Hospital / Clinic OPD</div>
+        <div class="doc-paper__doctor" id="docDoctor">Consulting Physician</div>
+        <div class="doc-paper__meta-row">
+          <span id="docPatient">Patient: Arjun Mehta</span>
+          <span id="docDate">Date: Aug 20, 2026</span>
+        </div>
+        <hr class="doc-paper__divider" />
+        <div class="doc-paper__rx-symbol">℞</div>
+        <div class="doc-paper__content" id="docContent">
+          <!-- Populated by JS -->
+        </div>
+        <div class="doc-paper__footer">
+          <div class="doc-paper__security">
+            <span class="security-stamp">✓ RESQRIDE CLOUD VERIFIED</span>
+            <span class="security-hash" id="docSecurityHash">SHA-256 Verified · Encrypted Storage</span>
+          </div>
+          <div class="doc-paper__signature">
+            <div class="sig-line"></div>
+            <span>Authorized Medical Signatory</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-modal__actions">
+        <a id="btnDocDownloadReal" href="#" target="_blank" class="btn-qr-action btn-qr-action--primary">
+          📄 Open Full PDF Document
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- FLOATING QUICK EMERGENCY DIAL BAR (Flows into view when scrolled)    -->
+  <!-- ================================================================== -->
+  <aside class="floating-dial-bar" id="floatingDialBar" aria-label="Quick Emergency Dial">
+    <div class="floating-dial-bar__inner">
+      <div class="floating-dial-bar__info">
+        <span class="floating-dial-bar__pulse"></span>
+        <div class="floating-dial-bar__text-wrap">
+          <span class="floating-dial-bar__title" id="floatingBarTitle">ResQRide Live Incident</span>
+          <span class="floating-dial-bar__sub" id="floatingBarSub">Arjun Mehta · B+</span>
+        </div>
+      </div>
+      <div class="floating-dial-bar__actions">
+        <button class="floating-pill-assess" id="floatingBtnAssess" type="button" title="Open Distress Assessment">
+          🆘 Assess
+        </button>
+        <a href="tel:102" class="floating-dial-btn" id="floatingBtnCall" title="Instant Call 102 Ambulance">
+          🚑 Dial 102
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+
+</html>

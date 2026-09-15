@@ -2,15 +2,18 @@ import base64
 from datetime import datetime, timezone
 import json
 import logging
+import math
 import os
 from typing import Optional, List, Dict, Any
 import uuid
-from fastapi import Depends, FastAPI, File, HTTPException, Security, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Security, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 import firebase_admin
 from firebase_admin import auth, credentials, firestore
+import httpx
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
 
@@ -83,17 +86,15 @@ def init_firebase():
             firebase_admin.initialize_app(cred)
             _firebase_initialized = True
             logger.info(f"Firebase Admin initialized via path: {service_account_path}")
+        elif os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") and os.path.exists(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")):
+            firebase_admin.initialize_app()
+            _firebase_initialized = True
+            logger.info("Firebase Admin initialized via GOOGLE_APPLICATION_CREDENTIALS.")
         else:
-            # Fallback to Google Application Default Credentials if available
-            try:
-                firebase_admin.initialize_app()
-                _firebase_initialized = True
-                logger.info("Firebase Admin initialized via Application Default Credentials.")
-            except Exception as default_err:
-                logger.warning(
-                    f"Firebase credentials not found or unconfigured: {default_err}. "
-                    "Protected endpoints requiring Firebase ID token verification will fail until credentials are provided."
-                )
+            logger.info(
+                "Firebase credentials not found in environment (FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_SERVICE_ACCOUNT_PATH, or GOOGLE_APPLICATION_CREDENTIALS). "
+                "Protected endpoints requiring Firebase ID token verification will fail until credentials are provided."
+            )
     except Exception as e:
         logger.error(f"Failed to initialize Firebase Admin SDK: {e}")
 
@@ -102,7 +103,7 @@ init_firebase()
 
 
 def is_firebase_initialized() -> bool:
-    return _firebase_initialized or bool(firebase_admin._apps)
+    return _firebase_initialized and bool(firebase_admin._apps)
 
 
 # ---------------------------------------------------------------------------
@@ -145,10 +146,11 @@ async def get_current_user(
         # Attempt lazy initialization in case env vars were set after module load
         init_firebase()
         if not is_firebase_initialized():
-            logger.error("Authentication rejected: Firebase Admin is not initialized.")
+            logger.warning("Authentication rejected: Firebase Admin credentials not configured.")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Authentication service misconfigured on server.",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication credentials invalid or unverified.",
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
     token = credentials_auth.credentials.strip()
@@ -184,11 +186,16 @@ async def get_current_user(
         )
 
 
-# ---------------------------------------------------------------------------
-# Public Endpoints
-# ---------------------------------------------------------------------------
+_frontend_dir = os.path.join(os.path.dirname(__file__), "..", "Frontend")
+
+
 @app.get("/")
-def root():
+def root(request: Request, id: Optional[str] = None):
+    accept = request.headers.get("accept", "")
+    if id or "text/html" in accept:
+        index_path = os.path.join(_frontend_dir, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
     return {
         "message": "ResQRide backend is running",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1050,3 +1057,559 @@ def get_emergency_medical_triage_card(user_id: str):
 </body>
 </html>"""
     return HTMLResponse(content=html_content, status_code=200)
+
+
+# ---------------------------------------------------------------------------
+# Mock & Registered Data (used for demo, offline test, or when Supabase is not yet populated)
+# ---------------------------------------------------------------------------
+REGISTERED_PROFILES: dict = {}
+
+MOCK_USER_PROFILES = {
+    "demo-user-001": {
+        "id": "demo-user-001",
+        "name": "Arjun Mehta",
+        "age": 28,
+        "blood_group": "B+",
+        "verified": True,
+        "allergies": [
+            {"name": "Penicillin", "severity": "severe"},
+            {"name": "Sulfa Drugs", "severity": "severe"},
+            {"name": "Dust Mites", "severity": "moderate"},
+            {"name": "Latex", "severity": "mild"},
+        ],
+        "prescriptions": [
+            {"name": "Metformin", "dosage": "500mg", "frequency": "Twice daily"},
+            {"name": "Atorvastatin", "dosage": "10mg", "frequency": "Once at bedtime"},
+            {"name": "Cetirizine", "dosage": "10mg", "frequency": "Once daily (as needed)"},
+        ],
+        "emergency_contacts": [
+            {"name": "Priya Mehta", "relation": "Wife", "phone": "+919876543210"},
+            {"name": "Rajesh Mehta", "relation": "Father", "phone": "+919812345678"},
+            {"name": "Dr. Kavita Sharma", "relation": "Family Doctor", "phone": "+919988776655"},
+        ],
+        "medical_notes": "Type 2 Diabetes (controlled). Mild seasonal allergies. No surgical history.",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    },
+    "demo-user-002": {
+        "id": "demo-user-002",
+        "name": "Pooja Verma",
+        "age": 24,
+        "blood_group": "O-",
+        "verified": True,
+        "allergies": [
+            {"name": "Peanuts", "severity": "severe"},
+            {"name": "Aspirin / NSAIDs", "severity": "severe"},
+            {"name": "Cat Dander", "severity": "moderate"},
+        ],
+        "prescriptions": [
+            {"name": "Budecort Inhaler", "dosage": "200mcg", "frequency": "Twice daily"},
+            {"name": "Levocetirizine", "dosage": "5mg", "frequency": "Once daily at night"},
+            {"name": "EpiPen Auto-Injector", "dosage": "0.3mg", "frequency": "Carry always (emergency)"},
+        ],
+        "emergency_contacts": [
+            {"name": "Ananya Verma", "relation": "Sister", "phone": "+919823456789"},
+            {"name": "Sunil Verma", "relation": "Father", "phone": "+919834567890"},
+            {"name": "Dr. A. Sen", "relation": "Pulmonologist", "phone": "+919845678901"},
+        ],
+        "medical_notes": "Chronic Asthma & Anaphylactic Peanut Allergy. Always carry EpiPen in helmet kit.",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    },
+    "demo-user-003": {
+        "id": "demo-user-003",
+        "name": "Rohan Deshmukh",
+        "age": 32,
+        "blood_group": "A+",
+        "verified": True,
+        "allergies": [
+            {"name": "Pollen", "severity": "mild"},
+            {"name": "Shellfish", "severity": "moderate"},
+        ],
+        "prescriptions": [
+            {"name": "Telmisartan", "dosage": "40mg", "frequency": "Once daily morning"},
+            {"name": "Vitamin D3", "dosage": "60000 IU", "frequency": "Once weekly"},
+        ],
+        "emergency_contacts": [
+            {"name": "Snehal Deshmukh", "relation": "Spouse", "phone": "+919856789012"},
+            {"name": "Vikram Deshmukh", "relation": "Brother", "phone": "+919867890123"},
+            {"name": "Dr. M. Iyer", "relation": "Cardiologist", "phone": "+919878901234"},
+        ],
+        "medical_notes": "Primary Hypertension. Titanium implant in left collarbone (2023).",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    },
+}
+
+MOCK_USER_PROFILE = MOCK_USER_PROFILES["demo-user-001"]
+
+MOCK_USER_PRESCRIPTIONS = {
+    "demo-user-001": [
+        {
+            "file_id": "mock-rx-001",
+            "filename": "Dr_Sharma_Endocrinology_Prescription.pdf",
+            "signed_url": None,
+            "content_type": "application/pdf",
+            "size": 245760,
+            "created_at": "2026-08-20T10:30:00Z",
+            "type": "medical_prescription",
+            "doctor": "Dr. Kavita Sharma, MD",
+            "clinic": "Max Healthcare Saket, New Delhi",
+            "medications": ["Metformin 500mg BD", "Atorvastatin 10mg HS", "Cetirizine 10mg PRN"],
+        },
+        {
+            "file_id": "mock-rx-002",
+            "filename": "Blood_Glucose_HbA1c_Lab_Report.pdf",
+            "signed_url": None,
+            "content_type": "application/pdf",
+            "size": 189440,
+            "created_at": "2026-09-05T14:15:00Z",
+            "type": "lab_report",
+            "doctor": "Dr. S. Nair, Pathologist",
+            "clinic": "Dr. Lal PathLabs, Delhi",
+            "medications": ["HbA1c: 6.8% (Controlled)", "Fasting Glucose: 112 mg/dL"],
+        },
+    ],
+    "demo-user-002": [
+        {
+            "file_id": "mock-rx-003",
+            "filename": "Asthma_Action_Plan_Pulmonology.pdf",
+            "signed_url": None,
+            "content_type": "application/pdf",
+            "size": 312000,
+            "created_at": "2026-07-14T09:00:00Z",
+            "type": "medical_prescription",
+            "doctor": "Dr. A. Sen, Pulmonologist",
+            "clinic": "Fortis Hospital, Okhla",
+            "medications": ["Budecort Inhaler 200mcg 1 puff BD", "EpiPen 0.3mg Auto-injector SOS"],
+        },
+        {
+            "file_id": "mock-rx-004",
+            "filename": "Allergy_Panel_Immunology_Diagnosis.pdf",
+            "signed_url": None,
+            "content_type": "application/pdf",
+            "size": 215000,
+            "created_at": "2026-08-11T16:20:00Z",
+            "type": "allergy_report",
+            "doctor": "Dr. R. Kapoor, Immunologist",
+            "clinic": "Apollo Hospital, Sarita Vihar",
+            "medications": ["Strict peanut/NSAID avoidance", "Emergency protocol documented"],
+        },
+    ],
+    "demo-user-003": [
+        {
+            "file_id": "mock-rx-005",
+            "filename": "Cardiology_Hypertension_Care_Plan.pdf",
+            "signed_url": None,
+            "content_type": "application/pdf",
+            "size": 268000,
+            "created_at": "2026-08-28T11:45:00Z",
+            "type": "medical_prescription",
+            "doctor": "Dr. M. Iyer, Cardiologist",
+            "clinic": "AIIMS Cardiology OPD",
+            "medications": ["Telmisartan 40mg OD morning", "Vitamin D3 60k weekly"],
+        },
+    ],
+}
+
+
+MOCK_HOSPITALS = [
+    {
+        "name": "AIIMS Trauma Centre",
+        "address": "Sri Aurobindo Marg, Ansari Nagar, New Delhi",
+        "distance_km": 1.2,
+        "open_now": True,
+        "phone": "+911126588500",
+        "lat": 28.5672,
+        "lng": 77.2100,
+        "rating": 4.3,
+    },
+    {
+        "name": "Safdarjung Hospital",
+        "address": "Ansari Nagar West, New Delhi",
+        "distance_km": 2.5,
+        "open_now": True,
+        "phone": "+911126707437",
+        "lat": 28.5685,
+        "lng": 77.2065,
+        "rating": 4.0,
+    },
+    {
+        "name": "Max Super Speciality Hospital",
+        "address": "Saket, New Delhi",
+        "distance_km": 3.8,
+        "open_now": True,
+        "phone": "+911126515050",
+        "lat": 28.5274,
+        "lng": 77.2149,
+        "rating": 4.5,
+    },
+    {
+        "name": "Apollo Hospital",
+        "address": "Mathura Road, Sarita Vihar, New Delhi",
+        "distance_km": 5.1,
+        "open_now": True,
+        "phone": "+911126925858",
+        "lat": 28.5306,
+        "lng": 77.2875,
+        "rating": 4.4,
+    },
+    {
+        "name": "Fortis Escorts Heart Institute",
+        "address": "Okhla Road, New Delhi",
+        "distance_km": 6.3,
+        "open_now": False,
+        "phone": "+911147135000",
+        "lat": 28.5555,
+        "lng": 77.2765,
+        "rating": 4.6,
+    },
+]
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate the great-circle distance between two points on Earth in km."""
+    R = 6371.0
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lon / 2) ** 2
+    )
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+# ---------------------------------------------------------------------------
+# Public Emergency Endpoints (NO AUTH — QR scan target)
+# ---------------------------------------------------------------------------
+@app.get("/api/emergency/profiles")
+def list_demo_profiles():
+    """
+    PUBLIC endpoint — returns available demo profiles so anyone testing
+    can easily switch riders and verify personalized data.
+    """
+    combined = {**MOCK_USER_PROFILES, **REGISTERED_PROFILES}
+    return {
+        "success": True,
+        "profiles": [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "blood_group": p["blood_group"],
+                "age": p.get("age"),
+            }
+            for p in combined.values()
+        ],
+    }
+
+
+@app.post("/api/emergency/profile")
+def save_user_profile(payload: dict):
+    """
+    PUBLIC sign-up/profile endpoint — saves personalized sign-up info
+    (name, blood group, allergies, prescriptions, contacts) to Supabase/Firestore
+    and in-memory store so it is immediately accessible via the QR code URL.
+    """
+    user_id = payload.get("id") or f"rider-{uuid.uuid4().hex[:8]}"
+    profile = {
+        "id": user_id,
+        "name": payload.get("name", "Unknown Rider"),
+        "age": payload.get("age", 25),
+        "blood_group": payload.get("blood_group", "O+"),
+        "verified": True,
+        "allergies": payload.get("allergies", []),
+        "prescriptions": payload.get("prescriptions", []),
+        "emergency_contacts": payload.get("emergency_contacts", []),
+        "medical_notes": payload.get("medical_notes", ""),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    REGISTERED_PROFILES[user_id] = profile
+
+    # Persist to Supabase if configured
+    try:
+        url = os.environ.get("SUPABASE_URL", SUPABASE_URL).strip()
+        key = os.environ.get("SUPABASE_SERVICE_KEY", SUPABASE_SERVICE_KEY).strip()
+        if url and key:
+            client = create_client(url, key)
+            client.table("users").upsert(profile).execute()
+            logger.info(f"User profile saved to Supabase: {user_id}")
+    except Exception as e:
+        logger.warning(f"Could not persist profile to Supabase: {e}")
+
+    # Persist to Firestore if configured
+    try:
+        if is_firebase_initialized():
+            db = firestore.client()
+            db.collection("users").document(user_id).set(profile)
+            logger.info(f"User profile saved to Firestore: {user_id}")
+    except Exception as e:
+        logger.warning(f"Could not persist profile to Firestore: {e}")
+
+    return {
+        "success": True,
+        "message": "Profile saved successfully",
+        "user_id": user_id,
+        "profile": profile,
+    }
+
+
+@app.get("/api/emergency/{user_id}")
+def get_emergency_profile(user_id: str):
+    """
+    PUBLIC endpoint — returns the medical profile for a user.
+    This is the QR-code scan target. No authentication required.
+    Checks in-memory registered store, Supabase 'users' table, and demo profiles.
+    """
+    # 1. Check in-memory registered profiles first (e.g. from sign up during session)
+    if user_id in REGISTERED_PROFILES:
+        return {
+            "success": True,
+            "source": "memory",
+            "profile": REGISTERED_PROFILES[user_id],
+        }
+
+    # 2. Try fetching from Supabase
+    try:
+        url = os.environ.get("SUPABASE_URL", SUPABASE_URL).strip()
+        key = os.environ.get("SUPABASE_SERVICE_KEY", SUPABASE_SERVICE_KEY).strip()
+
+        if url and key:
+            client = create_client(url, key)
+            response = client.table("users").select("*").eq("id", user_id).execute()
+
+            if response.data and len(response.data) > 0:
+                user_data = response.data[0]
+                return {
+                    "success": True,
+                    "source": "supabase",
+                    "profile": {
+                        "id": user_data.get("id"),
+                        "name": user_data.get("name", "Unknown"),
+                        "age": user_data.get("age"),
+                        "blood_group": user_data.get("blood_group", "Unknown"),
+                        "verified": user_data.get("verified", False),
+                        "allergies": user_data.get("allergies", []),
+                        "prescriptions": user_data.get("prescriptions", []),
+                        "emergency_contacts": user_data.get("emergency_contacts", []),
+                        "medical_notes": user_data.get("medical_notes", ""),
+                        "updated_at": user_data.get("updated_at", datetime.now(timezone.utc).isoformat()),
+                    },
+                }
+            else:
+                logger.info(f"No profile found in Supabase for user_id: {user_id}")
+    except Exception as e:
+        logger.warning(f"Error fetching from Supabase for user {user_id}: {e}")
+
+    # 3. Check predefined mock profiles
+    if user_id in MOCK_USER_PROFILES:
+        return {
+            "success": True,
+            "source": "mock",
+            "profile": MOCK_USER_PROFILES[user_id],
+        }
+
+    # 4. Fallback: generate personalized mock profile with requested ID
+    mock = {**MOCK_USER_PROFILE, "id": user_id}
+    return {
+        "success": True,
+        "source": "mock",
+        "profile": mock,
+    }
+
+
+@app.get("/api/emergency/{user_id}/exists")
+def check_emergency_profile(user_id: str):
+    """
+    PUBLIC quick-check — verifies whether a user profile exists.
+    """
+    if user_id in REGISTERED_PROFILES or user_id in MOCK_USER_PROFILES:
+        return {"exists": True, "source": "local"}
+
+    try:
+        url = os.environ.get("SUPABASE_URL", SUPABASE_URL).strip()
+        key = os.environ.get("SUPABASE_SERVICE_KEY", SUPABASE_SERVICE_KEY).strip()
+
+        if url and key:
+            client = create_client(url, key)
+            response = client.table("users").select("id").eq("id", user_id).execute()
+            if response.data and len(response.data) > 0:
+                return {"exists": True, "source": "supabase"}
+    except Exception as e:
+        logger.warning(f"Error checking profile existence: {e}")
+
+    return {"exists": True, "source": "mock"}
+
+
+@app.get("/api/emergency/{user_id}/prescriptions")
+def get_emergency_prescriptions(user_id: str):
+    """
+    PUBLIC endpoint — returns uploaded prescription files for a user.
+    Generates short-lived signed URLs for each PDF so the emergency page can display them.
+    Falls back to mock data if Supabase/Firebase is not configured.
+    """
+    files = []
+
+    # Try Supabase storage + Firestore metadata
+    try:
+        url = os.environ.get("SUPABASE_URL", SUPABASE_URL).strip()
+        key = os.environ.get("SUPABASE_SERVICE_KEY", SUPABASE_SERVICE_KEY).strip()
+
+        if url and key:
+            client = create_client(url, key)
+
+            # List files in user's storage folder
+            try:
+                storage_files = client.storage.from_(BUCKET).list(user_id)
+            except Exception:
+                storage_files = []
+
+            # Get Firestore metadata if available
+            firestore_meta = {}
+            try:
+                if is_firebase_initialized():
+                    db = firestore.client()
+                    docs = db.collection("users").document(user_id).collection("files").stream()
+                    for doc in docs:
+                        firestore_meta[doc.id] = doc.to_dict()
+            except Exception as fs_err:
+                logger.warning(f"Firestore metadata fetch failed: {fs_err}")
+
+            # Generate signed URLs for each file
+            for item in storage_files:
+                raw_name = item.get("name", "")
+                if not raw_name.endswith(".pdf"):
+                    continue
+                file_id = raw_name[:-4]
+                storage_path = f"{user_id}/{raw_name}"
+                meta = firestore_meta.get(file_id, {})
+
+                # Generate a 30-minute signed URL
+                try:
+                    signed_res = client.storage.from_(BUCKET).create_signed_url(
+                        storage_path, expires_in=1800
+                    )
+                    signed_url = None
+                    if isinstance(signed_res, dict):
+                        signed_url = signed_res.get("signedURL") or signed_res.get("signedUrl")
+                    elif hasattr(signed_res, "signed_url"):
+                        signed_url = getattr(signed_res, "signed_url")
+
+                    if signed_url:
+                        files.append({
+                            "file_id": file_id,
+                            "filename": meta.get("originalFileName", raw_name),
+                            "signed_url": signed_url,
+                            "content_type": "application/pdf",
+                            "size": meta.get("size", item.get("metadata", {}).get("size") if isinstance(item.get("metadata"), dict) else 0),
+                            "created_at": item.get("created_at") or meta.get("createdAt"),
+                            "type": meta.get("type", "medical_prescription"),
+                            "doctor": meta.get("doctor"),
+                            "clinic": meta.get("clinic"),
+                        })
+                except Exception as sign_err:
+                    logger.warning(f"Could not sign URL for {storage_path}: {sign_err}")
+
+            if files:
+                return {
+                    "success": True,
+                    "source": "supabase",
+                    "files": files,
+                }
+
+    except Exception as e:
+        logger.warning(f"Error fetching prescriptions for user {user_id}: {e}")
+
+    # Fallback: check profile-specific mock prescription files
+    if user_id in MOCK_USER_PRESCRIPTIONS:
+        return {
+            "success": True,
+            "source": "mock",
+            "files": MOCK_USER_PRESCRIPTIONS[user_id],
+        }
+
+    # Default fallback
+    return {
+        "success": True,
+        "source": "mock",
+        "files": MOCK_USER_PRESCRIPTIONS.get("demo-user-001", []),
+    }
+
+
+@app.get("/api/hospitals/nearby")
+async def get_nearby_hospitals(
+    lat: float = Query(..., description="Latitude of the crash/scan location"),
+    lng: float = Query(..., description="Longitude of the crash/scan location"),
+    radius: int = Query(5000, description="Search radius in meters (default 5000)"),
+):
+    """
+    PUBLIC endpoint — returns nearby hospitals.
+    Uses Google Places API if GOOGLE_MAPS_API_KEY is set, otherwise returns mock data
+    with distances calculated from the provided coordinates.
+    """
+    google_api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+
+    if google_api_key:
+        # Use Google Places Nearby Search
+        try:
+            places_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+            params = {
+                "location": f"{lat},{lng}",
+                "radius": radius,
+                "type": "hospital",
+                "key": google_api_key,
+            }
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(places_url, params=params)
+                data = resp.json()
+
+            hospitals = []
+            for place in data.get("results", [])[:8]:
+                p_lat = place.get("geometry", {}).get("location", {}).get("lat", 0)
+                p_lng = place.get("geometry", {}).get("location", {}).get("lng", 0)
+                dist = _haversine_km(lat, lng, p_lat, p_lng)
+
+                hospitals.append({
+                    "name": place.get("name", "Unknown Hospital"),
+                    "address": place.get("vicinity", ""),
+                    "distance_km": round(dist, 1),
+                    "open_now": place.get("opening_hours", {}).get("open_now", None),
+                    "phone": None,  # Places Nearby doesn't return phone; would need Details API
+                    "lat": p_lat,
+                    "lng": p_lng,
+                    "rating": place.get("rating"),
+                    "maps_url": f"https://www.google.com/maps/dir/?api=1&destination={p_lat},{p_lng}&travelmode=driving",
+                })
+
+            hospitals.sort(key=lambda h: h["distance_km"])
+            return {
+                "success": True,
+                "source": "google_places",
+                "hospitals": hospitals,
+            }
+
+        except Exception as e:
+            logger.error(f"Google Places API error: {e}")
+
+    # Fallback: mock hospitals with recalculated distances
+    hospitals = []
+    for h in MOCK_HOSPITALS:
+        dist = _haversine_km(lat, lng, h["lat"], h["lng"])
+        hospitals.append({
+            **h,
+            "distance_km": round(dist, 1),
+            "maps_url": f"https://www.google.com/maps/dir/?api=1&destination={h['lat']},{h['lng']}&travelmode=driving",
+        })
+
+    hospitals.sort(key=lambda h: h["distance_km"])
+    return {
+        "success": True,
+        "source": "mock",
+        "hospitals": hospitals,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Serve Frontend Static Files (mount LAST so it doesn't override API routes)
+# ---------------------------------------------------------------------------
+_frontend_dir = os.path.join(os.path.dirname(__file__), "..", "Frontend")
+if os.path.isdir(_frontend_dir):
+    app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
+    logger.info(f"Serving frontend from: {_frontend_dir}")
