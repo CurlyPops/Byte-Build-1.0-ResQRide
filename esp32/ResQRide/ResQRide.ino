@@ -511,7 +511,38 @@ void buzzerUpdate() {
 // ========================================================================
 
 void checkForCrash() {
-  if (crashDetected || interpreter == nullptr) {
+  if (crashDetected) {
+    return;
+  }
+
+  // Fallback: If TFLM model/interpreter is not active, use high-G kinematic threshold detection
+  // (Acceleration >= 4.0g AND Gyroscope >= 300 deg/s for 3 consecutive samples = 30ms)
+  if (interpreter == nullptr) {
+    static int consecutiveCrashSamples = 0;
+    if (accelMag >= 4.0f && gyroMag >= 300.0f) {
+      consecutiveCrashSamples++;
+      if (consecutiveCrashSamples >= 3) {
+        crashDetected = true;
+        switchWasOff = false;
+        initialSwitchState = digitalRead(CANCEL_BTN_PIN);
+
+        Serial.println();
+        Serial.println("========================================");
+        Serial.println("  !!! CRASH DETECTED (KINEMATIC FALLBACK) !!!");
+        Serial.println("========================================");
+        Serial.printf("Acceleration:     %.2f g\n", accelMag);
+        Serial.printf("Gyroscope:        %.1f deg/s\n", gyroMag);
+        Serial.println("Alert activated (15s window).");
+        Serial.println("Turn switch OFF then ON to cancel.");
+        Serial.println("========================================");
+
+        buzzerStart();
+        bleSendCrashAlert(true);
+        consecutiveCrashSamples = 0;
+      }
+    } else {
+      consecutiveCrashSamples = 0;
+    }
     return;
   }
 
@@ -691,8 +722,9 @@ void setup() {
   Serial.println();
   Serial.println("[TFLM] Initializing ResQRide 1D CNN Model...");
   tflModel = tflite::GetModel(g_model);
-  if (tflModel->version() != TFLITE_SCHEMA_VERSION) {
-    Serial.println("[TFLM] ERROR: Model schema mismatch!");
+  if (!tflModel || tflModel->version() != TFLITE_SCHEMA_VERSION) {
+    Serial.println("[TFLM] Notice: Model schema not active — switching to Kinematic Threshold Crash Engine.");
+    interpreter = nullptr;
   } else {
     static tflite::AllOpsResolver resolver;
     static tflite::MicroInterpreter static_interpreter(
